@@ -1,0 +1,10 @@
+# Text stored with LF; shell scripts must stay LF on Windows checkouts too (Git Bash rejects CR)
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.template text eol=lf
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.png binary
