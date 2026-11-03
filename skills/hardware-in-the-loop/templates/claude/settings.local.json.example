@@ -1,0 +1,25 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "python -I \"$CLAUDE_PROJECT_DIR/harness/swarm/usage_statusline.py\""
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/harness/swarm/handoff_hook.sh\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "HIL_HANDOFF_PCT": "95",
+    "PYTHONUTF8": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  }
+}

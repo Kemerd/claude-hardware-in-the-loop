@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CAD viewer</title>
+<!--
+  Web CAD viewer for packed CadQuery builds (pack_mesh.py output), with section planes, x-ray, a parts list by mass,
+  a live mass / CG panel, a materials panel, optional PCB and harness overlays, and review notes.
+  Data files (fetched relative to this page):
+    mesh.json            {"chunks", "bytes", "build", "about", "pcb": [names], "harness": name}
+    mesh_<k>.json        {"b64": ...} pieces of the 'HILM' payload
+    <board>.json         pcb_to_json.py output (optional, listed in mesh.json or ?pcb=a.json,b.json)
+    <wires>.json         harness runs + ties (optional, listed in mesh.json or ?harness=wires.json)
+  Notes: stored by serve.py (POST api/notes) or, on a static host, in this browser's localStorage.
+-->
+<style>
+  :root {
+    --bg:#0b0d12; --panel:rgba(22,25,33,.84); --fg:#e8eaf0; --dim:#8b91a1; --acc:#4f8cff; --line:rgba(255,255,255,.08);
+    --spring:cubic-bezier(.2,.9,.3,1.25); --ease:cubic-bezier(.2,.8,.2,1);
+    --tabh:58px; --gap:12px;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.35 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #c { position:fixed; inset:0; display:block; touch-action:none; }
+
+  /* ---- glass panels ---- */
+  .panel { backdrop-filter:blur(18px) saturate(1.4); -webkit-backdrop-filter:blur(18px) saturate(1.4); background:var(--panel); border:1px solid var(--line); border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+  #hud { position:fixed; left:max(var(--gap),env(safe-area-inset-left)); top:max(var(--gap),env(safe-area-inset-top)); padding:10px 14px; max-width:min(92vw,420px); z-index:2; }
+  #hud h1 { margin:0 0 2px; font-size:15px; font-weight:600; letter-spacing:.2px; }
+  #hud .sub { color:var(--dim); font-size:12px; }
+  #hud .more { transition:max-height .4s var(--ease), opacity .3s; max-height:220px; overflow:hidden; }
+  #hud.min .more { max-height:0; opacity:0; }
+
+  /* ---- two columns of cards; the tab bar toggles them ---- */
+  .col { position:fixed; display:flex; flex-direction:column; gap:10px; pointer-events:none; z-index:1;
+         top:max(var(--gap),env(safe-area-inset-top)); bottom:calc(max(var(--gap),env(safe-area-inset-bottom)) + var(--tabh) + 10px); }
+  #colL { left:max(var(--gap),env(safe-area-inset-left)); width:min(94vw,400px); padding-top:96px; justify-content:flex-end; }
+  #colR { right:max(var(--gap),env(safe-area-inset-right)); width:min(92vw,320px); }
+  .card { pointer-events:auto; display:none; flex-direction:column; min-height:0; flex:0 1 auto; overflow:hidden; }
+  .card.open { display:flex; animation:pop .45s var(--spring); }
+  .card header { display:flex; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line); flex:none; }
+  .card header b { flex:1; font-weight:600; }
+  .card header .x { color:var(--dim); cursor:pointer; padding:0 4px; border-radius:6px; }
+  .card header .x:hover { color:var(--fg); background:rgba(255,255,255,.08); }
+  .card .body { padding:8px 12px 10px; overflow:auto; -webkit-overflow-scrolling:touch; min-height:0; }
+  .card[data-pane="parts"] { flex:1 1 auto; max-height:52vh; }
+
+  /* ---- bottom tab bar ---- */
+  #tabbar { position:fixed; left:50%; bottom:max(var(--gap),env(safe-area-inset-bottom)); transform:translateX(-50%); display:flex; gap:4px; padding:6px; border-radius:18px; z-index:3; max-width:calc(100vw - 16px); overflow-x:auto; }
+  #tabbar button { all:unset; cursor:pointer; padding:8px 12px; border-radius:12px; font-size:12.5px; color:var(--dim); white-space:nowrap; transition:background .25s, color .25s, transform .35s var(--spring); }
+  #tabbar button:hover { color:var(--fg); }
+  #tabbar button:active { transform:scale(.94); }
+  #tabbar button.on { color:#fff; background:rgba(79,140,255,.28); }
+  #tabbar button .cnt { font-size:10px; color:var(--dim); margin-left:4px; }
+
+  /* ---- controls ---- */
+  .row { display:flex; align-items:center; gap:8px; margin:6px 0; }
+  .row label { width:18px; font-weight:600; color:var(--dim); }
+  .row input[type=range] { flex:1; accent-color:var(--acc); height:28px; min-width:0; }
+  .row .val { width:70px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); font-size:12px; }
+  .sw { width:34px; height:20px; border-radius:10px; background:#3a3f4b; position:relative; cursor:pointer; transition:background .25s; flex:none; }
+  .sw::after { content:""; position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:8px; background:#fff; transition:transform .3s var(--spring); }
+  .sw.on { background:var(--acc); } .sw.on::after { transform:translateX(14px); }
+  .flip { font-size:11px; color:var(--dim); border:1px solid var(--line); border-radius:8px; padding:2px 6px; cursor:pointer; user-select:none; }
+  .flip.on { color:var(--fg); border-color:var(--acc); }
+  .btn { font-size:12px; padding:5px 9px; border-radius:9px; border:1px solid var(--line); background:rgba(255,255,255,.05); color:var(--fg); cursor:pointer; user-select:none; white-space:nowrap; transition:transform .3s var(--spring), background .2s, border-color .2s; }
+  .btn:active { transform:scale(.95); }
+  .btn.on { border-color:var(--acc); background:rgba(79,140,255,.18); }
+  .btn.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  .btn.accent { border-color:rgba(255,159,10,.65); color:#ffc266; }
+  .tools { display:flex; gap:6px; flex-wrap:wrap; padding:8px 12px 4px; }
+  input[type=search] { width:100%; padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:rgba(255,255,255,.06); color:var(--fg); outline:none; font-size:13px; }
+  .muted { color:var(--dim); font-size:12px; }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-size:12.5px; font-variant-numeric:tabular-nums; }
+  .kv span:nth-child(odd) { color:var(--dim); }
+  .big { font-size:20px; font-weight:600; letter-spacing:.2px; font-variant-numeric:tabular-nums; }
+
+  /* ---- list rows (parts, materials, runs) ---- */
+  .p { display:flex; align-items:center; gap:8px; padding:6px; border-radius:10px; cursor:pointer; transition:background .2s; }
+  .p:hover { background:rgba(255,255,255,.05); }
+  .p.hid { opacity:.38; }
+  .p.sel { background:rgba(79,140,255,.18); }
+  .p .tag { font-size:10px; padding:1px 5px; border-radius:6px; flex:none; font-weight:600; letter-spacing:.3px; }
+  .p .tag.new { background:rgba(255,140,40,.22); color:#ffb070; }
+  .p .tag.chg { background:rgba(79,140,255,.22); color:#9cc0ff; }
+  .dot { width:10px; height:10px; border-radius:5px; flex:none; border:1px solid rgba(255,255,255,.25); }
+  .p .n { flex:1; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .p .m { font-variant-numeric:tabular-nums; color:var(--dim); font-size:12px; width:74px; text-align:right; flex:none; }
+  .p .c { font-variant-numeric:tabular-nums; color:var(--dim); font-size:11px; width:28px; text-align:right; flex:none; }
+  .bar { height:3px; border-radius:2px; background:var(--acc); opacity:.55; margin:2px 0 0 18px; transition:width .5s var(--ease); }
+  #list { overflow:auto; padding:4px 6px 10px; -webkit-overflow-scrolling:touch; min-height:0; }
+
+  /* ---- pick card, loader, notes, sheet, toast ---- */
+  #pick { position:fixed; left:50%; top:max(var(--gap),env(safe-area-inset-top)); transform:translateX(-50%); padding:10px 14px; max-width:min(92vw,380px); font-size:12.5px; display:none; z-index:2; }
+  #pick.show { display:block; animation:drop .45s var(--spring); }
+  #pick b { display:block; font-size:13px; margin-bottom:2px; word-break:break-all; }
+  #load { position:fixed; inset:0; display:grid; place-items:center; background:var(--bg); z-index:9; transition:opacity .4s; }
+  #load .lbar { width:220px; height:4px; border-radius:2px; background:#2a2f3a; overflow:hidden; margin-top:10px; }
+  #load .lbar i { display:block; height:100%; width:0; background:var(--acc); transition:width .2s; }
+  .nr { display:flex; gap:8px; padding:7px 6px; border-radius:10px; cursor:pointer; align-items:flex-start; transition:background .2s; }
+  .nr:hover { background:rgba(255,255,255,.05); }
+  .nr.sel { background:rgba(79,140,255,.18); }
+  .nr .k { flex:none; width:20px; height:20px; border-radius:10px; background:#ff9f0a; color:#1a1206; font-size:11px; font-weight:700; display:grid; place-items:center; }
+  .nr .tx { flex:1; font-size:12.5px; min-width:0; white-space:pre-wrap; word-break:break-word; }
+  .nr .tx i { display:block; font-style:normal; color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .nr .del { flex:none; color:var(--dim); padding:0 5px; border-radius:6px; font-size:15px; line-height:18px; }
+  .nr .del:hover { color:#ff6b6b; background:rgba(255,107,107,.12); }
+  #sheet { position:fixed; left:50%; top:50%; width:min(92vw,460px); padding:14px; transform:translate(-50%,-46%) scale(.94); opacity:0; pointer-events:none; transition:transform .5s var(--spring), opacity .22s; z-index:5; }
+  #sheet.show { transform:translate(-50%,-50%) scale(1); opacity:1; pointer-events:auto; }
+  #sheet .ttl { font-weight:600; font-size:15px; }
+  #sheet .ctx { color:var(--dim); font-size:12px; margin:3px 0 10px; word-break:break-all; }
+  #sheet textarea { width:100%; min-height:120px; resize:vertical; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:rgba(255,255,255,.06); color:var(--fg); font:inherit; outline:none; transition:border-color .2s, box-shadow .2s; }
+  #sheet textarea:focus { border-color:var(--acc); box-shadow:0 0 0 3px rgba(79,140,255,.25); }
+  #sheet .acts { display:flex; justify-content:flex-end; gap:8px; margin-top:12px; align-items:center; }
+  #sheet .acts .hint { flex:1; color:var(--dim); font-size:11px; }
+  #toast { position:fixed; left:50%; bottom:calc(max(var(--gap),env(safe-area-inset-bottom)) + var(--tabh) + 14px); transform:translate(-50%,24px); opacity:0; padding:8px 14px; font-size:12.5px; transition:transform .5s var(--spring), opacity .25s; pointer-events:none; z-index:6; }
+  #toast.show { transform:translate(-50%,0); opacity:1; }
+  @keyframes pop { from { transform:scale(.95) translateY(6px); opacity:0; } to { transform:none; opacity:1; } }
+  @keyframes drop { from { transform:translate(-50%,-10px) scale(.96); opacity:0; } to { transform:translate(-50%,0); opacity:1; } }
+
+  /* ---- tablet: narrower columns ---- */
+  @media (max-width:1100px) { #colL { width:min(46vw,360px); } #colR { width:min(44vw,300px); } }
+  /* ---- phone: one card at a time, as a bottom sheet above the tab bar (enforced in script too) ---- */
+  @media (max-width:720px) {
+    :root { --gap:8px; }
+    #hud { max-width:calc(100vw - 16px); padding:8px 12px; }
+    .col { top:auto; left:max(8px,env(safe-area-inset-left)) !important; right:max(8px,env(safe-area-inset-right)) !important; width:auto !important; padding-top:0 !important; max-height:52vh; }
+    .card[data-pane="parts"] { max-height:52vh; }
+    #pick { top:auto; bottom:calc(max(var(--gap),env(safe-area-inset-bottom)) + var(--tabh) + 10px); max-width:calc(100vw - 16px); z-index:4; }
+    #tabbar button { padding:8px 9px; font-size:12px; }
+  }
+  @media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="load"><div style="text-align:center"><div style="font-weight:600">Loading model</div><div class="lbar"><i id="lb"></i></div><div id="lt" style="color:var(--dim);font-size:12px;margin-top:6px">0 %</div></div></div>
+
+<div class="panel" id="hud">
+  <h1 id="title">CAD viewer</h1>
+  <div class="more">
+    <div class="sub" id="sub">Drag to orbit, pinch or wheel to zoom, right drag to pan. Tap a part to inspect it, then <b>Add note</b> to pin feedback on it. Model frame: X forward, Y left, Z up, mm.</div>
+  </div>
+</div>
+
+<!-- left column: parts + materials -->
+<div class="col" id="colL">
+  <div class="panel card" data-pane="materials">
+    <header><b>Materials</b><span class="muted" id="matsum"></span><span class="x" data-close="materials">&times;</span></header>
+    <div class="body" id="matlist"></div>
+  </div>
+  <div class="panel card" data-pane="parts">
+    <header><b>Parts by mass</b><span class="muted" id="tot"></span><span class="x" data-close="parts">&times;</span></header>
+    <div class="tools"><input type="search" id="q" placeholder="filter by name or material ..."></div>
+    <div class="tools" id="quick"></div>
+    <div class="tools"><span class="btn" id="hidefilt">hide filtered</span><span class="btn" id="solofilt">only filtered</span><span class="btn" id="newf" style="border-color:rgba(255,140,40,.6)">new in this build</span></div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<!-- right column: sections, mass / CG, overlays, notes -->
+<div class="col" id="colR">
+  <div class="panel card" data-pane="sections">
+    <header><b>Section planes</b><span class="muted">mm, model frame</span><span class="x" data-close="sections">&times;</span></header>
+    <div class="body">
+      <div class="row"><label>X</label><div class="sw" data-ax="0"></div><input type="range" data-ax="0" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="0">off</span><span class="flip" data-ax="0">flip</span></div>
+      <div class="row"><label>Y</label><div class="sw" data-ax="1"></div><input type="range" data-ax="1" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="1">off</span><span class="flip" data-ax="1">flip</span></div>
+      <div class="row"><label>Z</label><div class="sw" data-ax="2"></div><input type="range" data-ax="2" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="2">off</span><span class="flip" data-ax="2">flip</span></div>
+      <div class="row" style="flex-wrap:wrap;margin-top:8px"><span class="btn" id="xray">X-ray</span><span class="btn" id="bright">Fullbright</span><span class="btn" id="reset">Reset view</span><span class="btn" id="showall">Show all</span></div>
+    </div>
+  </div>
+  <div class="panel card" data-pane="mass">
+    <header><b>Mass &amp; CG</b><span class="muted">visible parts</span><span class="x" data-close="mass">&times;</span></header>
+    <div class="body" id="massbody"></div>
+  </div>
+  <div class="panel card" data-pane="overlays">
+    <header><b>Overlays</b><span class="muted" id="ovsum"></span><span class="x" data-close="overlays">&times;</span></header>
+    <div class="body" id="ovbody"><div class="muted">No PCB or harness overlay in this build.</div></div>
+  </div>
+  <div class="panel card" data-pane="notes">
+    <header><b>Review notes</b><span class="muted" id="ncount"></span><span class="btn" id="nview" title="A note on the whole view (no part)">+ View</span><span class="x" data-close="notes">&times;</span></header>
+    <div class="body" id="nlist"></div>
+  </div>
+</div>
+
+<div class="panel" id="pick"></div>
+
+<nav class="panel" id="tabbar" aria-label="Panels">
+  <button data-pane="parts">Parts</button>
+  <button data-pane="materials">Materials</button>
+  <button data-pane="sections">Sections</button>
+  <button data-pane="mass">Mass</button>
+  <button data-pane="overlays">Overlays<span class="cnt" id="ovcnt"></span></button>
+  <button data-pane="notes">Notes<span class="cnt" id="ncnt"></span></button>
+</nav>
+
+<div class="panel" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sttl"><div class="ttl" id="sttl">New note</div><div class="ctx" id="sctx"></div><textarea id="stext" placeholder="What should change? e.g. move this 2 mm aft, wall too thin here, this cable fouls the battery ..."></textarea><div class="acts"><span class="hint">Ctrl + Enter saves &middot; Esc cancels</span><span class="btn" id="scancel">Cancel</span><span class="btn primary" id="ssave">Save note</span></div></div>
+
+<div class="panel" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// =====================================================================================================================
+//  Small helpers
+// =====================================================================================================================
+const $ = id => document.getElementById(id);
+// every name that comes from a data file goes through esc() before it reaches innerHTML
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fin = v => typeof v === 'number' && Number.isFinite(v);
+const num = (v, d) => (fin(+v) && v !== null && v !== '' && typeof v !== 'boolean') ? +v : d;
+const v3ok = v => Array.isArray(v) && v.length === 3 && v.every(fin);
+const fmt = (v, d = 1) => fin(v) ? v.toFixed(d) : '-';
+const grams = g => !fin(g) ? '-' : (Math.abs(g) >= 1000 ? (g / 1000).toFixed(3) + ' kg' : g.toFixed(g < 10 ? 2 : 1) + ' g');
+const OVERLAY_NAME = /^[A-Za-z0-9][A-Za-z0-9_.\-]{0,120}\.json$/;      // same rule as pack_mesh.py / serve.py
+
+// =====================================================================================================================
+//  Renderer, scene, camera, lights
+// =====================================================================================================================
+const canvas = $('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b0d12);
+const camera = new THREE.PerspectiveCamera(40, 1, 1, 5000);
+const controls = new OrbitControls(camera, canvas); controls.enableDamping = true; controls.dampingFactor = 0.08;
+scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x20242c, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(1.5, 2.2, 1.8); scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fb4ff, 0.35); fill.position.set(-2, -1, -1.5); scene.add(fill);
+// model frame: X forward, Y left, Z up; three.js shows Y up, so the whole model is rotated (Z up -> Y up).
+// Everything the data files describe (parts, CG, boards, wires, note pins) lives under `root` in model-frame mm.
+const root = new THREE.Group(); root.rotation.x = -Math.PI / 2; scene.add(root);
+
+// =====================================================================================================================
+//  Panels: a tab bar toggles cards; on a phone only one card is open at a time (bottom sheet above the tab bar)
+// =====================================================================================================================
+const narrow = matchMedia('(max-width: 720px)');
+function cardEl(name) { return document.querySelector(`.card[data-pane="${name}"]`); }
+function setPane(name, on) {
+  const el = cardEl(name); if (!el) return;
+  if (on === undefined) on = !el.classList.contains('open');
+  if (on && narrow.matches) for (const o of document.querySelectorAll('.card.open')) if (o !== el) { o.classList.remove('open'); tabBtn(o.dataset.pane, false); }
+  el.classList.toggle('open', on); tabBtn(name, on);
+}
+function tabBtn(name, on) { const b = document.querySelector(`#tabbar button[data-pane="${name}"]`); if (b) b.classList.toggle('on', on); }
+for (const b of document.querySelectorAll('#tabbar button')) b.onclick = () => setPane(b.dataset.pane);
+for (const x of document.querySelectorAll('[data-close]')) x.onclick = () => setPane(x.dataset.close, false);
+// crossing into phone width: keep only the first open card
+narrow.addEventListener('change', () => { if (!narrow.matches) return; const open = [...document.querySelectorAll('.card.open')]; open.slice(1).forEach(o => setPane(o.dataset.pane, false)); });
+// the hud's help text folds away on a tap (more room on a phone)
+$('hud').onclick = () => $('hud').classList.toggle('min');
+if (narrow.matches) $('hud').classList.add('min');
+else { setPane('parts', true); setPane('sections', true); setPane('mass', true); }
+
+// =====================================================================================================================
+//  Clipping planes (model frame; applied through the root's rotation)
+// =====================================================================================================================
+const axesN = [new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, 0, -1)];
+const planes = [0, 1, 2].map(i => new THREE.Plane(axesN[i].clone(), 0));
+const clipOn = [false, false, false], clipFlip = [false, false, false], clipPos = [0, 0, 0];
+function activePlanes() {
+  const out = [];
+  for (let i = 0; i < 3; i++) if (clipOn[i]) {
+    const n = axesN[i].clone().multiplyScalar(clipFlip[i] ? -1 : 1);
+    const nw = n.clone().applyQuaternion(root.quaternion);
+    const pw = n.clone().multiplyScalar(clipPos[i]).applyQuaternion(root.quaternion);
+    planes[i].setFromNormalAndCoplanarPoint(nw, pw);
+    out.push(planes[i]);
+  }
+  return out;
+}
+
+// =====================================================================================================================
+//  Mesh payload ('HILM' + manifest + quantized parts)
+// =====================================================================================================================
+const parts = [], meshes = [], byName = new Map();
+const overlayMats = [];            // overlay materials follow the section planes too
+let manifest = null, head = null, xray = false, bright = false;
+async function load() {
+  // mesh.json is either {"b64": ...} (one piece) or {"chunks": n, "bytes": total} with the pieces in mesh_<k>.json
+  const r0 = await fetch('mesh.json', { cache: 'no-store' }); if (!r0.ok) throw new Error('mesh.json missing');
+  head = await r0.json();
+  setBuild(head.build || '', head.about || '');
+  const pieces = head.b64 != null ? [null] : Array.from({ length: Math.max(1, head.chunks | 0) }, (_, k) => `mesh_${k}.json`);
+  const expect = head.bytes || 0; const bufs = []; let decoded = 0;
+  for (let k = 0; k < pieces.length; k++) {
+    let b64;
+    if (pieces[k] === null) b64 = head.b64;
+    else {
+      const r = await fetch(pieces[k]); if (!r.ok) throw new Error(`piece ${k} missing`);
+      const reader = r.body.getReader(); const chunks = []; let got = 0;
+      for (;;) { const { done, value } = await reader.read(); if (done) break; chunks.push(value); got += value.length;
+        if (expect) { const f = Math.min(90, 90 * (decoded + got * 0.75) / expect); $('lb').style.width = f.toFixed(0) + '%'; $('lt').textContent = f.toFixed(0) + ' %'; } }
+      const raw = new Uint8Array(got); let o = 0; for (const c of chunks) { raw.set(c, o); o += c.length; }
+      b64 = JSON.parse(new TextDecoder().decode(raw)).b64;
+    }
+    $('lt').textContent = `decoding ${k + 1} / ${pieces.length}`;
+    const bin = atob(b64); const part = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) part[i] = bin.charCodeAt(i);
+    bufs.push(part); decoded += part.length;
+  }
+  const buf = new Uint8Array(decoded); { let o = 0; for (const b of bufs) { buf.set(b, o); o += b.length; } }
+  const dv = new DataView(buf.buffer);
+  if (String.fromCharCode(buf[0], buf[1], buf[2], buf[3]) !== 'HILM') throw new Error('bad payload (not HILM)');
+  const jl = dv.getUint32(4, true);
+  manifest = JSON.parse(new TextDecoder().decode(buf.subarray(8, 8 + jl)));
+  const base = 8 + jl, org = manifest.origin, sc = manifest.scale;
+  for (const p of manifest.parts) {
+    // copy into fresh buffers: typed-array views need aligned byte offsets and the JSON header length is arbitrary
+    const q = new Uint16Array(buf.buffer.slice(base + p.off, base + p.off + p.nv * 6));
+    const idx = new Uint32Array(buf.buffer.slice(base + p.off + p.nv * 6, base + p.off + p.nv * 6 + p.nt * 12));
+    const pos = new Float32Array(p.nv * 3);
+    for (let i = 0; i < p.nv; i++) { pos[3 * i] = org[0] + q[3 * i] * sc[0]; pos[3 * i + 1] = org[1] + q[3 * i + 1] * sc[1]; pos[3 * i + 2] = org[2] + q[3 * i + 2] * sc[2]; }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeVertexNormals();
+    const rgb = Array.isArray(p.rgb) && p.rgb.length === 3 ? p.rgb : [0.62, 0.64, 0.68];
+    if (!v3ok(p.com)) p.com = null;
+    const metal = /alumin|steel|stainless|titan|brass|bronze|copper|6061|7075|metal/i.test(p.material || '');
+    const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(rgb[0], rgb[1], rgb[2]), roughness: 0.62, metalness: metal ? 0.45 : 0.05, side: THREE.DoubleSide, clippingPlanes: [], clipShadows: false });
+    const mesh = new THREE.Mesh(g, m); mesh.userData = p; root.add(mesh);
+    // change marks from the packer: the glow colour per part (new = orange, reshaped = blue)
+    mesh.userData.glow = p.new ? new THREE.Color(0.9, 0.42, 0.08) : (p.changed ? new THREE.Color(0.2, 0.42, 1.0) : null);
+    p.rgb = rgb; parts.push(p); meshes.push(mesh); byName.set(p.name, mesh);
+  }
+  fitSliders();
+  buildMaterials(); buildList(); resetView(); applyClips(); buildCgMarker(); updateMass();
+  const L = $('load'); L.style.opacity = 0; setTimeout(() => L.remove(), 450);
+}
+
+// ---- build label: the packer's --label / --about; "Build 7" names the change-mark button "new in 7"
+let BUILD = '', BL = '';
+function setBuild(label, about) {
+  BUILD = String(label || ''); const m = /build\s+(\S+)/i.exec(BUILD); BL = m ? m[1] : '';
+  document.title = `CAD viewer${BUILD ? ', ' + BUILD : ''}`;
+  $('title').textContent = `CAD viewer${BUILD ? ', ' + BUILD : ''}`;
+  $('newf').textContent = BL ? `new in ${BL}` : 'new in this build';
+  if (about) { const d = document.createElement('div'); d.className = 'sub'; d.style.marginTop = '6px'; d.textContent = String(about); $('hud').querySelector('.more').appendChild(d); }
+}
+
+// ---- section sliders span the model's bounding box (origin + 65000 x scale is the packer's quantization range)
+function fitSliders() {
+  const lo = manifest.origin, sc = manifest.scale;
+  if (!v3ok(lo) || !v3ok(sc)) return;
+  for (let i = 0; i < 3; i++) {
+    const a = lo[i], b = lo[i] + 65000 * sc[i], pad = Math.max(1, (b - a) * 0.05);
+    const r = document.querySelector(`input[type=range][data-ax="${i}"]`);
+    r.min = (a - pad).toFixed(1); r.max = (b + pad).toFixed(1); r.step = Math.max(0.05, (b - a) / 800).toFixed(2);
+    clipPos[i] = (a + b) / 2; r.value = clipPos[i];
+  }
+}
+
+// =====================================================================================================================
+//  View
+// =====================================================================================================================
+function resetView() {
+  const box = new THREE.Box3().setFromObject(root); if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()); const s = Math.max(1, box.getSize(new THREE.Vector3()).length());
+  controls.target.copy(c); camera.position.set(c.x + s * 0.55, c.y + s * 0.35, c.z + s * 0.75); camera.near = s / 500; camera.far = s * 10; camera.updateProjectionMatrix(); controls.update();
+}
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+function applyClips() { const cp = activePlanes(); for (const m of meshes) m.material.clippingPlanes = cp; for (const mt of overlayMats) mt.clippingPlanes = cp; }
+let newMode = false;   // "new in this build": the changed parts glow, everything else drops to a faint shell
+function applyLook() {
+  for (const m of meshes) {
+    const g = newMode && m.userData.glow;
+    const dim = newMode && !m.userData.glow;
+    m.material.transparent = xray || dim; m.material.opacity = xray ? 0.28 : (dim ? 0.14 : 1); m.material.depthWrite = !(xray || dim);
+    m.material.emissive = g ? m.userData.glow.clone().multiplyScalar(0.75) : (bright ? m.material.color.clone().multiplyScalar(0.55) : new THREE.Color(0, 0, 0));
+    m.material.needsUpdate = true;
+  }
+}
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+
+// ---- section panel wiring
+for (const sw of document.querySelectorAll('.sw[data-ax]')) sw.onclick = () => { const i = +sw.dataset.ax; clipOn[i] = !clipOn[i]; sw.classList.toggle('on', clipOn[i]); showVal(i); applyClips(); };
+for (const r of document.querySelectorAll('input[type=range][data-ax]')) r.oninput = () => { const i = +r.dataset.ax; clipPos[i] = +r.value; showVal(i); applyClips(); };
+for (const f of document.querySelectorAll('.flip')) f.onclick = () => { const i = +f.dataset.ax; clipFlip[i] = !clipFlip[i]; f.classList.toggle('on', clipFlip[i]); applyClips(); };
+function showVal(i) { document.querySelector(`.val[data-ax="${i}"]`).textContent = clipOn[i] ? clipPos[i].toFixed(1) + ' mm' : 'off'; }
+$('xray').onclick = e => { xray = !xray; e.target.classList.toggle('on', xray); applyLook(); };
+$('bright').onclick = e => { bright = !bright; e.target.classList.toggle('on', bright); applyLook(); };
+$('reset').onclick = resetView;
+$('showall').onclick = () => { for (const m of meshes) m.visible = true; refreshList(); };
+$('newf').onclick = e => { newMode = !newMode; e.target.classList.toggle('on', newMode); q.value = newMode ? '#new' : ''; filterText = q.value; applyLook(); refreshList(); };
+
+// =====================================================================================================================
+//  Parts list + filter ("mat:<name>" = exact material, "#new" = change marks, else name / material substring)
+// =====================================================================================================================
+const list = $('list'), q = $('q');
+let filterText = '', selected = null;
+function matches(p) {
+  if (!filterText) return true;
+  if (filterText === '#new') return !!(p.new || p.changed);
+  if (filterText.startsWith('mat:')) return (p.material || '(none)') === filterText.slice(4);
+  const t = filterText.toLowerCase();
+  return p.name.toLowerCase().includes(t) || (p.material || '').toLowerCase().includes(t);
+}
+function buildList() {
+  list.innerHTML = '';
+  for (const p of parts) {
+    const d = document.createElement('div'); d.className = 'p'; d.dataset.name = p.name;
+    const tag = p.new ? '<span class="tag new">NEW</span>' : (p.changed ? '<span class="tag chg">CHG</span>' : '');
+    d.innerHTML = `<span class="dot" style="background:rgb(${p.rgb.map(v => Math.round(v * 255)).join(',')})"></span><span class="n">${esc(p.name)}</span>${tag}<span class="m">${p.mass_g == null ? 'massless' : grams(p.mass_g)}</span>`;
+    d.onclick = ev => { const m = byName.get(p.name); if (ev.shiftKey || ev.altKey) { m.visible = !m.visible; } else { select(p.name); } refreshList(); };
+    d.ondblclick = () => { const m = byName.get(p.name); m.visible = !m.visible; refreshList(); };
+    list.appendChild(d);
+  }
+  refreshList();
+}
+function refreshList() {
+  for (const d of list.children) { const m = byName.get(d.dataset.name); if (!m) continue; const p = m.userData;
+    d.style.display = matches(p) ? '' : 'none'; d.classList.toggle('hid', !m.visible); d.classList.toggle('sel', selected === p.name); }
+  for (const r of $('matlist').querySelectorAll('.p[data-mat]')) r.classList.toggle('sel', filterText === 'mat:' + r.dataset.mat);
+  for (const b of $('quick').querySelectorAll('[data-mat]')) b.classList.toggle('on', filterText === 'mat:' + b.dataset.mat);
+  updateMass();
+}
+q.oninput = () => { filterText = q.value.trim(); refreshList(); };
+$('hidefilt').onclick = () => { for (const m of meshes) if (matches(m.userData)) m.visible = false; refreshList(); };
+$('solofilt').onclick = () => { for (const m of meshes) m.visible = matches(m.userData); refreshList(); };
+function setFilter(t) { filterText = t; q.value = t; refreshList(); }
+
+// =====================================================================================================================
+//  Materials panel: count and summed mass per material; a tap filters the parts list to it
+// =====================================================================================================================
+function buildMaterials() {
+  const g = new Map();
+  for (const p of parts) {
+    const k = p.material || '(none)';
+    const e = g.get(k) || { n: 0, m: 0, massless: 0, rgb: p.rgb }; e.n++;
+    if (fin(p.mass_g)) e.m += p.mass_g; else e.massless++;
+    g.set(k, e);
+  }
+  const rows = [...g.entries()].sort((a, b) => b[1].m - a[1].m);
+  const total = rows.reduce((s, r) => s + r[1].m, 0) || 1;
+  $('matsum').textContent = `${rows.length} materials`;
+  const box = $('matlist'); box.innerHTML = '';
+  for (const [k, e] of rows) {
+    const d = document.createElement('div'); d.className = 'p'; d.dataset.mat = k; d.style.flexWrap = 'wrap';
+    d.innerHTML = `<span class="dot" style="background:rgb(${e.rgb.map(v => Math.round(v * 255)).join(',')})"></span><span class="n">${esc(k)}</span><span class="c">${e.n}</span><span class="m">${grams(e.m)}</span><div class="bar" style="width:calc(${(100 * e.m / total).toFixed(1)}% - 18px)"></div>`;
+    d.onclick = () => setFilter(filterText === 'mat:' + k ? '' : 'mat:' + k);
+    box.appendChild(d);
+  }
+  const clr = document.createElement('div'); clr.className = 'tools'; clr.style.padding = '8px 0 0';
+  clr.innerHTML = '<span class="btn">clear filter</span><span class="btn">only this filter</span>';
+  clr.children[0].onclick = () => setFilter('');
+  clr.children[1].onclick = () => { for (const m of meshes) m.visible = matches(m.userData); refreshList(); };
+  box.appendChild(clr);
+  // quick filters in the parts card: the heaviest materials of THIS build (never a fixed project list)
+  const qk = $('quick'); qk.innerHTML = '';
+  for (const [k] of rows.slice(0, 6)) {
+    const b = document.createElement('span'); b.className = 'btn'; b.dataset.mat = k; b.textContent = k;
+    b.onclick = () => setFilter(filterText === 'mat:' + k ? '' : 'mat:' + k); qk.appendChild(b);
+  }
+}
+
+// =====================================================================================================================
+//  Mass / CG of the VISIBLE parts, recomputed whenever visibility changes; CG marker drawn in the scene
+// =====================================================================================================================
+let cgOn = true, cgMarker = null;
+function massStats(onlyVisible) {
+  let m = 0, cx = 0, cy = 0, cz = 0, n = 0, nl = 0;
+  for (const mesh of meshes) {
+    if (onlyVisible && !mesh.visible) continue;
+    n++; const p = mesh.userData;
+    if (!fin(p.mass_g) || p.mass_g <= 0 || !p.com) { nl++; continue; }
+    m += p.mass_g; cx += p.mass_g * p.com[0]; cy += p.mass_g * p.com[1]; cz += p.mass_g * p.com[2];
+  }
+  return { n, nl, m, cg: m > 0 ? [cx / m, cy / m, cz / m] : null };
+}
+function buildCgMarker() {
+  const box = new THREE.Box3().setFromObject(root); const s = box.isEmpty() ? 50 : box.getSize(new THREE.Vector3()).length();
+  cgMarker = new THREE.Group(); cgMarker.renderOrder = 20;
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff375f, depthTest: false, depthWrite: false, transparent: true });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(s * 0.008, 20, 14), mat); ball.renderOrder = 20; cgMarker.add(ball);
+  const L = s * 0.05, lm = new THREE.LineBasicMaterial({ color: 0xff375f, depthTest: false, transparent: true });
+  const lg = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-L, 0, 0), new THREE.Vector3(L, 0, 0), new THREE.Vector3(0, -L, 0), new THREE.Vector3(0, L, 0), new THREE.Vector3(0, 0, -L), new THREE.Vector3(0, 0, L)]);
+  const cross = new THREE.LineSegments(lg, lm); cross.renderOrder = 20; cgMarker.add(cross);
+  cgMarker.userData = { kind: 'cg' };
+  root.add(cgMarker);
+}
+function updateMass() {
+  if (!manifest) return;
+  const v = massStats(true), a = massStats(false);
+  if (cgMarker) { cgMarker.visible = cgOn && !!v.cg; if (v.cg) cgMarker.position.set(...v.cg); }
+  $('tot').textContent = `${grams(a.m)} total`;
+  const t = manifest.totals && typeof manifest.totals === 'object' ? manifest.totals : null;
+  const declared = t && fin(t.mass_g) ? `<span>builder total</span><span>${grams(t.mass_g)}${v3ok(t.cg_mm) ? ' @ (' + t.cg_mm.map(x => fmt(x)).join(', ') + ')' : ''}</span>` : '';
+  $('massbody').innerHTML =
+    `<div class="big">${grams(v.m)}</div>` +
+    `<div class="muted" style="margin-bottom:8px">${v.n} of ${a.n} parts visible${v.nl ? `, ${v.nl} massless` : ''}</div>` +
+    `<div class="kv"><span>CG x</span><span>${v.cg ? fmt(v.cg[0], 2) + ' mm' : '-'}</span><span>CG y</span><span>${v.cg ? fmt(v.cg[1], 2) + ' mm' : '-'}</span><span>CG z</span><span>${v.cg ? fmt(v.cg[2], 2) + ' mm' : '-'}</span>` +
+    `<span>all parts</span><span>${grams(a.m)}${a.cg ? ' @ (' + a.cg.map(x => fmt(x)).join(', ') + ')' : ''}</span>${declared}</div>` +
+    `<div class="row" style="margin-top:10px"><div class="sw${cgOn ? ' on' : ''}" id="cgsw"></div><span class="muted">CG marker</span></div>`;
+  $('cgsw').onclick = () => { cgOn = !cgOn; updateMass(); };
+}
+
+// =====================================================================================================================
+//  Overlays: PCB (pcb_to_json.py output) and harness (wires JSON). Missing files are simply absent.
+// =====================================================================================================================
+const boards = [];          // {name, data, group, sides: {top, bottom}}
+let harness = null;         // {name, group, runs: [{mesh, data, len}], ties: [...]}
+let pcbOn = true, harnessOn = true;
+const pickables = [];       // overlay meshes that answer a tap (footprints, wire runs)
+
+async function fetchJson(name) {
+  if (!OVERLAY_NAME.test(name)) { console.info('overlay name refused:', name); return null; }
+  try { const r = await fetch(name, { cache: 'no-store' }); if (!r.ok) return null; return await r.json(); }
+  catch { return null; }
+}
+function overlayLists() {
+  const qs = new URLSearchParams(location.search);
+  const split = a => a.flatMap(s => String(s).split(',')).map(s => s.trim()).filter(Boolean);
+  let pcb = [];
+  if (head && Array.isArray(head.pcb)) pcb = head.pcb.filter(x => typeof x === 'string'); else if (head && typeof head.pcb === 'string') pcb = [head.pcb];
+  pcb = [...new Set(pcb.concat(split(qs.getAll('pcb'))))];
+  const hq = split(qs.getAll('harness'));
+  const hn = hq.length ? hq[0] : (head && typeof head.harness === 'string' ? head.harness : null);
+  return { pcb, harness: hn };
+}
+function ovMat(m) { m.clippingPlanes = activePlanes(); overlayMats.push(m); return m; }
+function loopFrom(pts2, z, mat) {
+  const g = new THREE.BufferGeometry().setFromPoints(pts2.map(p => new THREE.Vector3(p[0], p[1], z)));
+  return new THREE.LineLoop(g, mat);
+}
+function validPoly(a) { return Array.isArray(a) && a.length >= 3 && a.every(p => Array.isArray(p) && p.length >= 2 && fin(p[0]) && fin(p[1])); }
+
+// ---- one board: slab from the outline (holes cut), courtyard boxes per side, mounting-hole rings
+function buildBoard(b, name) {
+  if (!b || typeof b !== 'object' || !Array.isArray(b.outline)) return null;
+  const t = Math.max(0.05, num(b.thickness_mm, 1.6));
+  const pl = b.place && typeof b.place === 'object' ? b.place : null;
+  // placement: board (0, 0) at origin_mm, turned rot_deg about model Z; side_up "bottom" flips it over X.
+  // In the board's own frame the top (F.Cu) face is z = 0 and the board body spans z = -t .. 0.
+  const outer = new THREE.Group();
+  outer.position.set(...(pl && v3ok(pl.origin_mm) ? pl.origin_mm : [0, 0, 0]));
+  outer.rotation.z = THREE.MathUtils.degToRad(num(pl && pl.rot_deg, 0));
+  const inner = new THREE.Group(); if (pl && pl.side_up === 'bottom') inner.rotation.x = Math.PI; outer.add(inner);
+  const edge = ovMat(new THREE.LineBasicMaterial({ color: 0x9be7b0 }));
+  for (const poly of b.outline) {
+    if (!poly || !validPoly(poly.outer)) continue;
+    const shape = new THREE.Shape(poly.outer.map(p => new THREE.Vector2(p[0], p[1])));
+    for (const h of (Array.isArray(poly.holes) ? poly.holes : [])) if (validPoly(h)) shape.holes.push(new THREE.Path(h.map(p => new THREE.Vector2(p[0], p[1]))));
+    const g = new THREE.ExtrudeGeometry(shape, { depth: t, bevelEnabled: false, curveSegments: 24 }); g.translate(0, 0, -t);
+    const slab = new THREE.Mesh(g, ovMat(new THREE.MeshStandardMaterial({ color: 0x1f6f43, roughness: 0.8, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide })));
+    inner.add(slab);
+    inner.add(loopFrom(poly.outer, 0.02, edge)); inner.add(loopFrom(poly.outer, -t - 0.02, edge));
+  }
+  const sides = { top: new THREE.Group(), bottom: new THREE.Group() }; inner.add(sides.top, sides.bottom);
+  const colTop = 0x4f8cff, colBot = 0xff9f0a;
+  for (const f of (Array.isArray(b.footprints) ? b.footprints : [])) {
+    if (!f || !Array.isArray(f.box) || f.box.length !== 4 || !f.box.every(fin)) continue;
+    const top = f.side !== 'bottom';
+    const w = f.box[2] - f.box[0], h = f.box[3] - f.box[1]; if (!(w > 0 && h > 0)) continue;
+    const cx = (f.box[0] + f.box[2]) / 2, cy = (f.box[1] + f.box[3]) / 2, dir = top ? 1 : -1, z0 = top ? 0 : -t;
+    const hgt = Math.max(0, num(f.height_mm, 0));       // optional part height (board pipelines write it); flat box otherwise
+    const geo = hgt > 0 ? new THREE.BoxGeometry(w, h, hgt) : new THREE.PlaneGeometry(w, h);
+    const mat = ovMat(new THREE.MeshBasicMaterial({ color: top ? colTop : colBot, transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx, cy, z0 + dir * (hgt > 0 ? hgt / 2 : 0.06));
+    mesh.userData = { kind: 'fp', board: b.board || name, ...f, w, h };
+    const ed = new THREE.LineSegments(new THREE.EdgesGeometry(geo), ovMat(new THREE.LineBasicMaterial({ color: top ? colTop : colBot })));
+    ed.position.copy(mesh.position);
+    (top ? sides.top : sides.bottom).add(mesh, ed); pickables.push(mesh);
+  }
+  const holeMat = ovMat(new THREE.LineBasicMaterial({ color: 0xffffff }));
+  for (const hdef of (Array.isArray(b.holes) ? b.holes : [])) {
+    if (!hdef || !fin(hdef.x) || !fin(hdef.y)) continue;
+    const r = Math.max(0.2, num(hdef.drill_mm, 1) / 2), pts = [];
+    for (let i = 0; i < 32; i++) { const a = i / 32 * Math.PI * 2; pts.push([hdef.x + r * Math.cos(a), hdef.y + r * Math.sin(a)]); }
+    inner.add(loopFrom(pts, 0.04, holeMat)); inner.add(loopFrom(pts, -t - 0.04, holeMat));
+  }
+  root.add(outer);
+  return { name, data: b, group: outer, sides, placed: !!pl };
+}
+
+// ---- wire colours: CSS names / hex, or the common short codes (wht, blk, red/blk stripes take the first)
+const WIRE = { blk: '#1d1d1f', wht: '#f2f2f2', red: '#d62828', grn: '#2a9d4b', yel: '#f4c430', blu: '#2f6fdf', org: '#f28c28', brn: '#7a4a24', vio: '#8a4fd6', gry: '#8d8d8d', pnk: '#f4a6c0', gray: '#8d8d8d', grey: '#8d8d8d' };
+function wireColor(c) {
+  const raw = String(c == null ? '' : c).trim(); const lo = raw.toLowerCase();
+  if (/^#([0-9a-f]{3}){1,2}$/i.test(raw) || /^rgb/i.test(raw) || /^hsl/i.test(raw)) { try { return new THREE.Color().setStyle(raw); } catch { /* fall through */ } }
+  const first = lo.split(/[\/\s,_-]+/)[0];
+  if (WIRE[first]) return new THREE.Color(WIRE[first]);
+  if (THREE.Color.NAMES && THREE.Color.NAMES[first] !== undefined) return new THREE.Color(THREE.Color.NAMES[first]);
+  return new THREE.Color(0xd0d0d0);
+}
+function polyLen(v) { let s = 0; for (let i = 1; i < v.length; i++) s += v[i].distanceTo(v[i - 1]); return s; }
+
+// ---- harness: one tube per run along its points, zip-tie rings at the tie points
+function buildHarness(w, name) {
+  if (!w || typeof w !== 'object' || !Array.isArray(w.runs)) return null;
+  const group = new THREE.Group(), runs = [], ties = [], byId = new Map();
+  for (const run of w.runs) {
+    if (!run || !Array.isArray(run.points_mm)) continue;
+    const v = run.points_mm.filter(v3ok).map(p => new THREE.Vector3(...p));
+    if (v.length < 2) continue;
+    const curve = v.length > 2 ? new THREE.CatmullRomCurve3(v, false, 'centripetal') : new THREE.LineCurve3(v[0], v[1]);
+    const r = Math.min(50, Math.max(0.05, num(run.diameter_mm, 2) / 2));
+    const geo = new THREE.TubeGeometry(curve, Math.min(800, Math.max(16, v.length * 16)), r, 10, false);
+    const col = wireColor(run.colour != null ? run.colour : run.color);
+    const mesh = new THREE.Mesh(geo, ovMat(new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, metalness: 0.05 })));
+    const len = polyLen(v);
+    mesh.userData = { kind: 'run', id: String(run.id == null ? `run ${runs.length + 1}` : run.id), from: run.from, to: run.to, spec: run.spec, colour: run.colour != null ? run.colour : run.color, diameter_mm: 2 * r, length_mm: len, points: v.length };
+    group.add(mesh); pickables.push(mesh);
+    const e = { mesh, curve, r, len, rgb: col }; runs.push(e); byId.set(mesh.userData.id, e);
+  }
+  const tieMat = ovMat(new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4 }));
+  for (const t of (Array.isArray(w.ties) ? w.ties : [])) {
+    if (!t || !v3ok(t.at_mm)) continue;
+    const at = new THREE.Vector3(...t.at_mm);
+    const ids = Array.isArray(t.run_ids) ? t.run_ids.map(String) : [];
+    const rs = ids.map(i => byId.get(i)).filter(Boolean);
+    const R = (rs.length ? Math.max(...rs.map(x => x.r)) * (rs.length > 1 ? 2.2 : 1.6) : 1.6);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R, Math.max(0.15, R * 0.22), 8, 28), tieMat);
+    ring.position.copy(at);
+    // orient the ring around the first bundled run: its tangent at the sample nearest to the tie point
+    if (rs.length) {
+      let bestU = 0, bestD = Infinity; const tmp = new THREE.Vector3();
+      for (let i = 0; i <= 120; i++) { const u = i / 120; rs[0].curve.getPointAt(u, tmp); const d = tmp.distanceToSquared(at); if (d < bestD) { bestD = d; bestU = u; } }
+      const tan = rs[0].curve.getTangentAt(bestU).normalize();
+      ring.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tan);
+    }
+    ring.userData = { kind: 'tie', run_ids: ids };
+    group.add(ring); ties.push(ring);
+  }
+  root.add(group);
+  return { name, group, runs, ties };
+}
+
+async function loadOverlays() {
+  const ls = overlayLists();
+  for (const n of ls.pcb) { const b = await fetchJson(n); const bb = b && buildBoard(b, n); if (bb) boards.push(bb); }
+  if (ls.harness) { const w = await fetchJson(ls.harness); harness = w && buildHarness(w, ls.harness); }
+  renderOverlayPanel();
+  const n = boards.length + (harness ? 1 : 0);
+  $('ovcnt').textContent = n ? String(n) : '';
+  if (n && !narrow.matches) setPane('overlays', true);
+  if (n) resetView();          // frame the boards / wires too (they may reach past the parts)
+}
+function renderOverlayPanel() {
+  const body = $('ovbody');
+  if (!boards.length && !harness) { body.innerHTML = '<div class="muted">No PCB or harness overlay in this build.</div>'; $('ovsum').textContent = ''; return; }
+  $('ovsum').textContent = `${boards.length} board${boards.length === 1 ? '' : 's'}${harness ? ', harness' : ''}`;
+  let h = '';
+  if (boards.length) {
+    h += `<div class="row"><div class="sw${pcbOn ? ' on' : ''}" id="pcbsw"></div><b style="flex:1">PCB</b><span class="btn${boards.every(b => b.sides.top.visible) ? ' on' : ''}" id="ptop">top</span><span class="btn${boards.every(b => b.sides.bottom.visible) ? ' on' : ''}" id="pbot">bottom</span></div>`;
+    for (const b of boards) {
+      const d = b.data, nfp = (d.footprints || []).length;
+      h += `<div class="muted" style="margin:2px 0 6px 42px">${esc(d.board || b.name)}: ${nfp} footprints, ${(d.holes || []).length} holes, ${esc(d.copper_layers)} layers, ${esc(d.thickness_mm)} mm${b.placed ? '' : ' <span style="color:#ffc266">(unplaced: at the model origin)</span>'}</div>`;
+    }
+  }
+  if (harness) {
+    const total = harness.runs.reduce((s, r) => s + r.len, 0);
+    h += `<div class="row" style="margin-top:8px"><div class="sw${harnessOn ? ' on' : ''}" id="harsw"></div><b style="flex:1">Harness</b><span class="muted">${harness.runs.length} runs, ${harness.ties.length} ties, ${fmt(total, 0)} mm</span></div>`;
+    for (const r of harness.runs) {
+      const u = r.mesh.userData;
+      h += `<div class="p" data-run="${esc(u.id)}"><span class="dot" style="background:#${r.rgb.getHexString()}"></span><span class="n">${esc(u.id)}${u.spec ? ' <span class="muted">' + esc(u.spec) + '</span>' : ''}</span><span class="m">${fmt(r.len, 0)} mm</span></div>`;
+    }
+  }
+  body.innerHTML = h;
+  if ($('pcbsw')) $('pcbsw').onclick = () => { pcbOn = !pcbOn; for (const b of boards) b.group.visible = pcbOn; renderOverlayPanel(); };
+  if ($('ptop')) $('ptop').onclick = () => { const on = !boards.every(b => b.sides.top.visible); for (const b of boards) b.sides.top.visible = on; renderOverlayPanel(); };
+  if ($('pbot')) $('pbot').onclick = () => { const on = !boards.every(b => b.sides.bottom.visible); for (const b of boards) b.sides.bottom.visible = on; renderOverlayPanel(); };
+  if ($('harsw')) $('harsw').onclick = () => { harnessOn = !harnessOn; harness.group.visible = harnessOn; renderOverlayPanel(); };
+  for (const row of body.querySelectorAll('[data-run]')) row.onclick = () => { const r = harness.runs.find(x => x.mesh.userData.id === row.dataset.run); if (r) showRun(r.mesh); };
+}
+let litRun = null;
+function lightRun(mesh) {
+  if (litRun) litRun.material.emissive = new THREE.Color(0, 0, 0);
+  litRun = mesh; if (mesh) mesh.material.emissive = new THREE.Color(0.35, 0.35, 0.35);
+  for (const row of $('ovbody').querySelectorAll('[data-run]')) row.classList.toggle('sel', !!mesh && row.dataset.run === mesh.userData.id);
+}
+function showRun(mesh) {
+  const u = mesh.userData; lightRun(mesh); selected = null; refreshList();
+  pick.innerHTML = `<b>wire ${esc(u.id)}</b>${esc(u.spec || 'no spec')} &middot; ${esc(u.colour || '')} &middot; d ${fmt(u.diameter_mm, 2)} mm<br>${esc(u.from || '?')} &rarr; ${esc(u.to || '?')}<br>length ${fmt(u.length_mm, 1)} mm along ${u.points} points`;
+  pick.classList.add('show');
+}
+function showFootprint(u) {
+  lightRun(null); selected = null; refreshList();
+  pick.innerHTML = `<b>${esc(u.ref)} <span class="muted">${esc(u.value)}</span></b>${esc(u.fpid || '')}<br>${esc(u.board)} &middot; ${esc(u.side)} &middot; (${fmt(u.x, 2)}, ${fmt(u.y, 2)}) mm &middot; ${fmt(u.rot_deg, 1)} deg<br>${u.box_source === 'courtyard' ? 'courtyard' : 'bounding box'} ${fmt(u.w, 2)} x ${fmt(u.h, 2)} mm${fin(u.height_mm) ? ', height ' + fmt(u.height_mm, 2) + ' mm' : ''}`;
+  pick.classList.add('show');
+}
+
+// =====================================================================================================================
+//  Picking: note pins first, then the nearest visible part or overlay item on the un-clipped side
+// =====================================================================================================================
+const pick = $('pick'), ray = new THREE.Raycaster(); let downAt = null, pickAt = null;
+function shown(o) { for (let x = o; x; x = x.parent) if (!x.visible) return false; return true; }
+canvas.addEventListener('pointerdown', e => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 6) return;
+  const v = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(v, camera);
+  const ph = ray.intersectObjects(pins, false)[0]; if (ph) { openNote(ph.object.userData.note); return; }
+  const cand = meshes.filter(m => m.visible).concat(pickables.filter(shown));
+  const hits = ray.intersectObjects(cand, false);
+  const cp = activePlanes(); const h = hits.find(x => cp.every(pl => pl.distanceToPoint(x.point) >= 0));
+  if (!h) { selected = null; lightRun(null); pick.classList.remove('show'); refreshList(); return; }
+  const u = h.object.userData;
+  if (u.kind === 'run') { showRun(h.object); return; }
+  if (u.kind === 'fp') { showFootprint(u); return; }
+  pickAt = root.worldToLocal(h.point.clone()).toArray();   // model-frame mm of the tap
+  select(u.name); refreshList();
+});
+function select(name) {
+  const mesh = byName.get(name); if (!mesh) return;
+  selected = name; lightRun(null); const p = mesh.userData;
+  const at = pickAt || p.com; pickAt = null;
+  const lbl = BL || 'this build';
+  pick.innerHTML = `<b>${esc(p.name)}</b>${p.new ? `<span class="tag new">NEW in ${esc(lbl)}</span> ` : (p.changed ? `<span class="tag chg">reshaped in ${esc(lbl)}</span> ` : '')}${p.mass_g == null ? 'massless' : grams(p.mass_g)} &middot; ${esc(p.material || 'no material')}${p.link ? ' &middot; ' + esc(p.link) : ''}<br>COM ${p.com ? '(' + p.com.map(x => fmt(x)).join(', ') + ') mm' : '-'} &middot; z ${fmt(p.zmin)} .. ${fmt(p.zmax)}<br>${p.nt} triangles<div style="margin-top:8px"><span class="btn accent" id="addnote">Add note</span> <span class="btn" id="hidepart">Hide</span></div>`;
+  pick.classList.add('show');
+  $('addnote').onclick = () => openSheet({ part: name, at });
+  $('hidepart').onclick = () => { mesh.visible = false; pick.classList.remove('show'); refreshList(); };
+  const row = [...list.children].find(d => d.dataset.name === name); if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+// =====================================================================================================================
+//  Review notes: text + part + tapped point (model mm) + the whole view; serve.py stores them, else localStorage
+// =====================================================================================================================
+const nlist = $('nlist'), sheet = $('sheet'), stext = $('stext');
+const LS_KEY = 'hil_cad_notes_v1';
+let notes = [], pins = [], draft = null, apiOk = true;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.h); toast.h = setTimeout(() => t.classList.remove('show'), 2600); }
+function lsRead() { try { const j = JSON.parse(localStorage.getItem(LS_KEY) || '[]'); return Array.isArray(j) ? j : []; } catch { return []; } }
+function lsWrite(a) { try { localStorage.setItem(LS_KEY, JSON.stringify(a)); return true; } catch { return false; } }
+function currentView() {
+  const cam = root.worldToLocal(camera.position.clone()), tgt = root.worldToLocal(controls.target.clone());
+  return { cam: cam.toArray().map(v => +v.toFixed(2)), target: tgt.toArray().map(v => +v.toFixed(2)),
+           clips: [0, 1, 2].map(i => ({ on: clipOn[i], pos: clipPos[i], flip: clipFlip[i] })),
+           hidden: meshes.filter(m => !m.visible).map(m => m.userData.name), xray, bright, cg: cgOn, pcb: pcbOn, harness: harnessOn };
+}
+function restoreView(v) {
+  if (!v || typeof v !== 'object') return;
+  if (v3ok(v.cam) && v3ok(v.target)) { camera.position.copy(root.localToWorld(new THREE.Vector3(...v.cam))); controls.target.copy(root.localToWorld(new THREE.Vector3(...v.target))); controls.update(); }
+  if (Array.isArray(v.clips)) v.clips.forEach((c, i) => {
+    if (!c || i > 2) return;
+    clipOn[i] = !!c.on; clipPos[i] = fin(+c.pos) ? +c.pos : clipPos[i]; clipFlip[i] = !!c.flip;
+    document.querySelector(`.sw[data-ax="${i}"]`).classList.toggle('on', clipOn[i]);
+    document.querySelector(`input[type=range][data-ax="${i}"]`).value = clipPos[i];
+    document.querySelector(`.flip[data-ax="${i}"]`).classList.toggle('on', clipFlip[i]); showVal(i);
+  });
+  if (Array.isArray(v.hidden)) { const hs = new Set(v.hidden); for (const m of meshes) m.visible = !hs.has(m.userData.name); }
+  if ('xray' in v) { xray = !!v.xray; $('xray').classList.toggle('on', xray); }
+  if ('bright' in v) { bright = !!v.bright; $('bright').classList.toggle('on', bright); }
+  if ('cg' in v) cgOn = !!v.cg;
+  if ('pcb' in v) { pcbOn = !!v.pcb; for (const b of boards) b.group.visible = pcbOn; }
+  if ('harness' in v && harness) { harnessOn = !!v.harness; harness.group.visible = harnessOn; }
+  renderOverlayPanel(); applyClips(); applyLook(); refreshList();
+}
+// numbered pins: screen-constant sprites drawn over everything, so a note on a hidden inner part still shows where it is
+function pinTexture(n) {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  g.fillStyle = '#ff9f0a'; g.beginPath(); g.arc(32, 32, 27, 0, Math.PI * 2); g.fill();
+  g.lineWidth = 4; g.strokeStyle = 'rgba(0,0,0,.55)'; g.stroke();
+  g.fillStyle = '#1a1206'; g.font = 'bold 30px -apple-system,Segoe UI,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(String(n), 32, 34);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function drawPins() {
+  for (const p of pins) { root.remove(p); p.material.map.dispose(); p.material.dispose(); }
+  pins = [];
+  notes.forEach((n, i) => {
+    if (!v3ok(n.at_mm)) return;                                    // a whole-view note has no pin
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: pinTexture(i + 1), depthTest: false, depthWrite: false, sizeAttenuation: false, transparent: true }));
+    s.scale.set(0.034, 0.034, 1); s.renderOrder = 10; s.position.set(...n.at_mm); s.userData = { note: n.id };
+    root.add(s); pins.push(s);
+  });
+}
+function renderNotes() {
+  $('ncount').textContent = notes.length ? String(notes.length) : '';
+  $('ncnt').textContent = notes.length ? String(notes.length) : '';
+  nlist.innerHTML = '';
+  if (!notes.length) { const e = document.createElement('div'); e.className = 'muted'; e.style.padding = '8px 6px'; e.textContent = 'No notes yet. Tap a part, then Add note.'; nlist.appendChild(e); }
+  notes.forEach((n, i) => {
+    const d = document.createElement('div'); d.className = 'nr'; d.dataset.id = n.id;
+    const k = document.createElement('span'); k.className = 'k'; k.textContent = String(i + 1);
+    const tx = document.createElement('span'); tx.className = 'tx'; tx.textContent = n.text || '';
+    const meta = document.createElement('i'); const when = String(n.t || n.client_t || '').replace('T', ' ').slice(0, 16);
+    meta.textContent = `${n.part || 'whole view'} · ${when}${n.build && n.build !== BUILD ? ' · ' + n.build : ''}${n.local ? ' · this device only' : ''}`;
+    tx.appendChild(meta);
+    const x = document.createElement('span'); x.className = 'del'; x.title = 'Delete note'; x.textContent = '×';
+    x.onclick = ev => { ev.stopPropagation(); deleteNote(n.id); };
+    d.onclick = () => openNote(n.id);
+    d.append(k, tx, x); nlist.appendChild(d);
+  });
+  drawPins();
+}
+async function loadNotes() {
+  try {
+    const r = await fetch('api/notes', { cache: 'no-store' }); if (!r.ok) throw new Error(String(r.status));
+    const j = await r.json(); if (!Array.isArray(j)) throw new Error('not a list');
+    notes = j; apiOk = true;
+  } catch { notes = []; apiOk = false; }                         // static host: this device's notes only
+  notes = notes.concat(lsRead().map(n => ({ ...n, local: true })));
+  renderNotes();
+}
+async function saveNote() {
+  const text = stext.value.trim(); if (!text || !draft) { stext.focus(); return; }
+  const at = v3ok(draft.at) ? draft.at.map(v => +(+v).toFixed(3)) : null;
+  const body = { text, part: draft.part || null, at_mm: at, build: BUILD || null, view: currentView(), client_t: new Date().toISOString() };
+  let row = null;
+  if (apiOk) {
+    try {
+      const r = await fetch('api/notes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { toast('Not saved: ' + (j.error || r.status)); return; }
+      row = j;
+    } catch { apiOk = false; }
+  }
+  if (!row) {                                                   // no server: keep it on this device, never drop the words
+    row = { ...body, op: 'add', id: 'l' + Date.now().toString(16), local: true };
+    const loc = lsRead(); loc.push(row); if (!lsWrite(loc)) { toast('Not saved: this page cannot store notes'); return; }
+  }
+  notes.push(row); closeSheet(); renderNotes(); setPane('notes', true);
+  toast(row.local ? 'Saved on this device only' : `Note ${notes.length} saved`);
+}
+async function deleteNote(id) {
+  const n = notes.find(x => x.id === id); if (!n) return;
+  if (!confirm('Delete this note?')) return;
+  if (n.local) lsWrite(lsRead().filter(x => x.id !== id));
+  else {
+    try {
+      const r = await fetch('api/notes/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) });
+      if (!r.ok) { toast('Delete failed'); return; }
+    } catch { toast('Delete failed'); return; }
+  }
+  notes = notes.filter(x => x.id !== id); renderNotes();
+}
+function openSheet(d) {
+  draft = d || { part: null, at: null };
+  const at = v3ok(draft.at) ? ` at (${draft.at.map(v => (+v).toFixed(1)).join(', ')}) mm` : '';
+  $('sctx').textContent = draft.part ? `${draft.part}${at}` : 'Whole view: camera, section planes, hidden parts and overlays are saved with the note';
+  stext.value = ''; sheet.classList.add('show'); setTimeout(() => stext.focus(), 80);
+}
+function closeSheet() { sheet.classList.remove('show'); draft = null; }
+function openNote(id) {
+  const n = notes.find(x => x.id === id); if (!n) return;
+  restoreView(n.view); if (n.part && byName.has(n.part)) select(n.part); setPane('notes', true);
+  for (const d of nlist.children) if (d.dataset) d.classList.toggle('sel', d.dataset.id === id);
+}
+$('scancel').onclick = closeSheet;
+$('ssave').onclick = saveNote;
+stext.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveNote(); } else if (e.key === 'Escape') closeSheet(); });
+$('nview').onclick = () => openSheet({ part: null, at: null });
+
+// =====================================================================================================================
+//  Start: payload, then overlays (optional), then notes
+// =====================================================================================================================
+load().then(loadOverlays).then(loadNotes).catch(e => { $('lt').textContent = 'load failed: ' + e.message; console.error(e); });
+</script>
+</body>
+</html>
