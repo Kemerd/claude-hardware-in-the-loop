@@ -8,3 +8,10 @@
 *.ps1 text eol=crlf
 *.psm1 text eol=crlf
 *.png binary
+*.gif binary
+*.mp4 binary
+*.ttf binary
+*.otf binary
+*.html text eol=lf
+*.css text eol=lf
+*.mjs text eol=lf

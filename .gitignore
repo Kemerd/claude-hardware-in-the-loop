@@ -4,3 +4,13 @@ __pycache__/
 *.kicad_prl
 *-backups/
 fp-info-cache
+
+# README media: only the rendered results are published; the generator (sources, fonts, renderer) stays local
+media/*
+!media/out/
+media/out/frames/
+media/out/still_*.png
+media/out/00-smoke-*.png
+
+# Launch notes, not part of the repo
+REDDIT_POST.md
