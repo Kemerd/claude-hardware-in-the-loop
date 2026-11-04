@@ -20,8 +20,10 @@
 =======================================================================================================================
 """
 import ctypes
+import math
 import os
 import shutil
+import struct
 import tempfile
 
 ABI_VERSION = 1
@@ -194,3 +196,150 @@ class Twin:
     def trace_hash(self):
         """FNV-1a 64 of the trace so far."""
         return int(self.lib.hil_twin_trace_hash(self.h))
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Scenario timeline (.scn), played with the native runner's rule (sim/twin/src/twin_main.c): before step k, at
+#  t = k dt, every event with t_event <= t + 1e-12 that has not fired yet fires, in file order. "accept" lines are the
+#  runner's verdict and are skipped here.
+# ---------------------------------------------------------------------------------------------------------------------
+class Scenario:
+    """Parsed name, duration and timed events of a .scn file."""
+
+    def __init__(self, path):
+        self.name, self.duration, self.events, self.accepts = "", 0.0, [], []
+        if not path or not os.path.isfile(path):
+            raise TwinError(f"scenario not found: {path!r}")
+        with open(path, "r", encoding="utf-8") as fh:
+            for ln, raw in enumerate(fh, 1):
+                f = raw.split("#", 1)[0].split()
+                if not f:
+                    continue
+                if f[0] == "name" and len(f) >= 3 and f[1] == "=":
+                    self.name = f[2]
+                elif f[0] == "duration_s" and len(f) >= 3 and f[1] == "=":
+                    self.duration = float(f[2])
+                elif f[0] == "at" and len(f) >= 3:
+                    if f[2] == "set":
+                        if len(f) < 5:
+                            raise TwinError(f"{path}:{ln}: 'set' needs a name and a value")
+                        self.events.append([float(f[1]), True, f[3], float(f[4]), False])
+                    else:
+                        self.events.append([float(f[1]), False, f[2], float(f[3]) if len(f) >= 4 else 0.0, False])
+                elif f[0] == "accept" and len(f) == 4:
+                    if f[2] not in ("<", ">", "<=", ">=", "=="):
+                        raise TwinError(f"{path}:{ln}: unknown operator {f[2]!r}")
+                    self.accepts.append((f[1], f[2], float(f[3])))
+                else:
+                    raise TwinError(f"{path}:{ln}: cannot read {f[0]!r}")
+        if not self.name or not self.duration > 0.0:
+            raise TwinError(f"{path}: needs name and duration_s > 0")
+
+    def apply_due(self, twin, t):
+        """Fire every due event into the twin before the step that starts at t."""
+        for e in self.events:
+            if e[4] or t + 1e-12 < e[0]:
+                continue
+            e[4] = True
+            if e[1]:
+                twin.set(e[2], e[3])
+            else:
+                twin.command(e[2], e[3])
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Telemetry: the firmware's link frames (firmware/core/include/hil_core/link.h), decoded the way a station would
+# ---------------------------------------------------------------------------------------------------------------------
+def _crc8(data):
+    """CRC-8, polynomial 0x07, init 0 (hil_link_crc8)."""
+    crc = 0
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x07) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+class TelemetryDecoder:
+    """Streaming decoder of 0xA5 | type | len | payload | crc8 frames; keeps the last telemetry record."""
+
+    TELEM = 0x80
+    FIELDS = ("state", "fault", "q_rad", "qd_rad_s", "i_a", "vbat_v", "t_motor_c", "t_winding_est_c", "derate")
+
+    def __init__(self):
+        self.buf = bytearray()
+        self.last = None
+        self.frames = 0
+        self.bad = 0
+
+    def feed(self, data):
+        """Feed received bytes; returns the telemetry records completed by them."""
+        out = []
+        for byte in data:
+            if not self.buf and byte != 0xA5:
+                continue
+            self.buf.append(byte)
+            if len(self.buf) == 3 and self.buf[2] > 32:
+                self.buf.clear()
+                continue
+            if len(self.buf) < 4 or len(self.buf) < self.buf[2] + 4:
+                continue
+            n = self.buf[2]
+            frame = bytes(self.buf)
+            self.buf.clear()
+            if _crc8(frame[1:3 + n]) != frame[3 + n]:
+                self.bad += 1
+                continue
+            self.frames += 1
+            if frame[1] == self.TELEM and n == 30:
+                rec = dict(zip(self.FIELDS, struct.unpack("<BBfffffff", frame[3:3 + n])))
+                self.last = rec
+                out.append(rec)
+        return out
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Metrics and verdict: the subset of the native runner's metrics a host can compute (same names, same meaning)
+# ---------------------------------------------------------------------------------------------------------------------
+class Judge:
+    """Accumulates the runner's metrics from telemetry and truth; evaluates a scenario's accept lines."""
+
+    def __init__(self):
+        self.m = {"homed": 0.0, "fault": 0.0, "state": -1.0, "min_derate": 1.0, "max_t_winding_c": -1e9,
+                  "max_t_case_c": -1e9, "max_t_battery_c": -1e9, "min_vbat_v": 1e9, "max_abs_i_a": 0.0,
+                  "link_bad": 0.0, "telem_frames": 0.0}
+        self.dec = TelemetryDecoder()
+        self.target = None
+
+    def after_step(self, twin):
+        """Call after every step: drains the link, updates the extremes."""
+        for rec in self.dec.feed(twin.link_rx()):
+            self.m["state"], self.m["fault"] = float(rec["state"]), float(rec["fault"])
+            self.m["homed"] = 1.0 if rec["state"] == 2 else self.m["homed"]
+            self.m["min_derate"] = min(self.m["min_derate"], rec["derate"])
+        self.m["link_bad"], self.m["telem_frames"] = float(self.dec.bad), float(self.dec.frames)
+        i = abs(twin.get("i_motor_a"))
+        self.m["max_abs_i_a"] = max(self.m["max_abs_i_a"], i)
+        self.m["max_t_winding_c"] = max(self.m["max_t_winding_c"], twin.get("t_winding_c"))
+        self.m["max_t_case_c"] = max(self.m["max_t_case_c"], twin.get("t_case_c"))
+        self.m["max_t_battery_c"] = max(self.m["max_t_battery_c"], twin.get("t_battery_c"))
+        self.m["min_vbat_v"] = min(self.m["min_vbat_v"], twin.get("vbat_v"))
+
+    def finish(self, twin, scenario):
+        """Final metrics and the verdict: (passed, [(metric, op, limit, value, ok), ...])."""
+        target = None
+        for e in scenario.events:
+            if not e[1] and e[2] == "set_pos" and e[4]:
+                target = e[3]
+        q = twin.get("q_rad")
+        self.m["final_err_rad"] = abs(q - (target if target is not None else q))
+        self.m["final_abs_i_a"] = abs(twin.get("i_motor_a"))
+        rows, ok_all = [], True
+        ops = {"<": lambda v, l: v < l, ">": lambda v, l: v > l, "<=": lambda v, l: v <= l,
+               ">=": lambda v, l: v >= l, "==": lambda v, l: abs(v - l) < 1e-9}
+        for name, op, lim in scenario.accepts:
+            v = self.m.get(name, float("nan"))
+            ok = name in self.m and math.isfinite(v) and ops[op](v, lim)
+            ok_all &= ok
+            rows.append((name, op, lim, v, ok))
+        return ok_all and bool(rows), rows

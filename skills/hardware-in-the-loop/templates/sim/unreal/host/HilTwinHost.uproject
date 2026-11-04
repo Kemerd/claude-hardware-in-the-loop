@@ -1,0 +1,19 @@
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "Simulation",
+  "Description": "Minimal host project for the HilTwin plugin: builds it, runs its automation tests, opens a map with AHilTwinJointActor.",
+  "Modules": [
+    {
+      "Name": "HilTwinHost",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "HilTwin",
+      "Enabled": true
+    }
+  ]
+}

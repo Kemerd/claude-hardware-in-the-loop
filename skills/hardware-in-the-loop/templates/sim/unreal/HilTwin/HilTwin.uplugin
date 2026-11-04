@@ -1,0 +1,22 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0",
+  "FriendlyName": "HIL Twin",
+  "Description": "Hosts the native C digital twin (sim/twin, hil_twin_api) in Unreal Engine: kinematic replay at the twin's fixed step, or Chaos owns the link and the twin's firmware + actuator models apply the joint torque every async physics step.",
+  "Category": "Simulation",
+  "CreatedBy": "",
+  "EngineVersion": "5.8.0",
+  "CanContainContent": false,
+  "Modules": [
+    {
+      "Name": "HilTwin",
+      "Type": "Runtime",
+      "LoadingPhase": "Default",
+      "PlatformAllowList": [
+        "Win64",
+        "Linux"
+      ]
+    }
+  ]
+}

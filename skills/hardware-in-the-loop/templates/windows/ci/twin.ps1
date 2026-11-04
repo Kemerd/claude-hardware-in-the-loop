@@ -14,8 +14,9 @@
                       passed, F failed" line (exit 0 without it is a failure).
     twin_scenarios    every row of sim\twin\scenarios\MATRIX.txt over seeds 1..N; one "[twin] ... PASS|FAIL" line per run.
     twin_determinism  the first matrix row twice at seed 1: the two trace files must have the same SHA-256.
-    twin_abi          python -I sim\twin\tests\test_twin_ctypes.py <dll> <params>: the C ABI from another language,
-                      the way the Isaac Sim harness and notebooks load it.
+    twin_abi          python -I sim\twin\tests\test_twin_ctypes.py: the C ABI from another language (the way the Isaac
+                      harness and notebooks load it) plus host parity: the first matrix row played from Python must
+                      give the native runner's trace hash, and the Python judge must agree with its verdict.
   CI is CPU only (Initialize-CiEnvironment hides the GPU); the CUDA backend is exercised by its own gated script.
 =======================================================================================================================
 #>
@@ -209,8 +210,15 @@ if (Test-CiSelected 'twin_abi' $group $Only $Skip) {
   elseif (-not $dll) { $r.summary = 'hil_twin_api shared library not built' }
   elseif (-not (Test-Path $test)) { $r.summary = "missing $test" }
   else {
-    $run = Invoke-CiCommand -Exe $py -Arguments @('-I', $test, '--dll', $dll, '--params', (Join-Path $twin 'params\example_rig.txt')) `
-      -Cwd $runs -Log $log -TimeoutMin $TimeoutMin
+    # ---- the native runner's hash of the first matrix row at seed 1: the Python host must reproduce it
+    $pyArgs = @('-I', $test, '--dll', $dll, '--params', (Join-Path $twin 'params\example_rig.txt'))
+    $exe = Find-Built 'hil_twin'
+    if ($exe -and $matrix.Count -gt 0) {
+      $nat = Invoke-CiCommand -Exe $exe -Arguments @($matrix[0].params, $matrix[0].scenario, '--seed', '1', '--no-trace') -Cwd $runs -Log $log -TimeoutMin $TimeoutMin
+      $hm = Find-CiMatch $nat.lines 'trace fnv1a64=([0-9a-f]{16})'
+      if ($hm) { $pyArgs = @('-I', $test, '--dll', $dll, '--params', $matrix[0].params, '--scenario', $matrix[0].scenario, '--expect-hash', $hm.Groups[1].Value) }
+    }
+    $run = Invoke-CiCommand -Exe $py -Arguments $pyArgs -Cwd $runs -Log $log -TimeoutMin $TimeoutMin
     $m = Find-CiMatch $run.lines '^\[hil\] twin_ctypes: (\d+)/(\d+) checks passed, (\d+) failed'
     Complete-CiResult -Result $r -Run $run -Passed $(if ($m) { [int]$m.Groups[1].Value } else { $null }) `
       -Total $(if ($m) { [int]$m.Groups[2].Value } else { $null }) -SummaryFound ([bool]$m) -Summary $(if ($m) { $m.Value } else { 'no summary line' })
