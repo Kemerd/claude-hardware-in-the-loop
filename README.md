@@ -15,7 +15,7 @@
   <a href="#how-it-works">How it works</a> &nbsp;·&nbsp;
   <a href="#what-you-can-do-with-it">What you can do with it</a> &nbsp;·&nbsp;
   <a href="docs/METHOD.md">The method</a> &nbsp;·&nbsp;
-  <a href="docs/LESSONS.md">38 lessons</a> &nbsp;·&nbsp;
+  <a href="docs/LESSONS.md">40 lessons</a> &nbsp;·&nbsp;
   <a href="#licence">Licence</a>
 </p>
 
@@ -30,6 +30,16 @@
 ---
 
 ## What this is
+
+> **A starting point, not an all-in-one product.** Pull it, run the examples, then shape it into the harness
+> YOUR project needs: your boards, your plant models, your scenarios, your gates. The templates are tested
+> skeletons and a method, distilled from a larger private workflow that cannot be published; expect to add
+> checks, models and tools of your own, and to replace the examples entirely.
+
+> **Before you order anything real:** work through the harness, open the CAD and the board yourself, ask the agent
+> *why* for every part and every number, and have it run an adversarial review pass over the schematic, the
+> layout, the BOM, the CAD and the firmware (a fresh agent with the files, not the conclusions). Green gates mean
+> the checks that exist passed; they are not a substitute for an engineer looking. Then order with confidence.
 
 Hardware described by code. Boards are Python scripts that one shared pipeline turns into a KiCad schematic, a routed
 board, a fab set and a STEP model. Enclosures and assemblies are CadQuery builders that export geometry with mass and
@@ -59,7 +69,7 @@ refuses to produce them when anything is wrong.
   is 0 violations / 0 unconnected / 0 parity items at KiCad's default severities, and every purchased line resolves
   live to the MPN the schematic names. The example board runs all twelve steps in 21 seconds.
 - **The checks caught real mistakes.** A distributor code that looked right resolved to an 0603 part instead of the
-  0402 it was assumed to be; the live check failed the build and the board got the right part. Thirty-eight such
+  0402 it was assumed to be; the live check failed the build and the board got the right part. Forty such
   lessons, each one an afternoon, are in [docs/LESSONS.md](docs/LESSONS.md).
 - **Nothing is hand-copied.** Mass, CG, inertia and joints flow from the CAD export into the twin, the simulators and
   the viewer. A CAD change regenerates every tier's inputs.
@@ -116,7 +126,7 @@ builder. Firmware's control core is compiled twice from the same sources: once f
 </picture>
 
 [docs/CAD.md](docs/CAD.md) has the builder and plug-in contract, [docs/FIRMWARE.md](docs/FIRMWARE.md) the host suites
-and the twin rules, [docs/SIM.md](docs/SIM.md) the three tiers and the prompts to build the two that are roadmap.
+and the twin rules, [docs/SIM.md](docs/SIM.md) the C twin and its Unreal and Isaac Sim hosts.
 
 ### The cage: agents inside, everything else outside
 
@@ -175,6 +185,10 @@ Roles, waves, briefs, skeptics and the integrator are in [docs/SWARM.md](docs/SW
    The answers format is in `skills/hardware-in-the-loop/references/interview.md`. Tools, pinned versions and hashes
    are in [docs/TOOLS.md](docs/TOOLS.md).
 
+4. Make it yours: swap the example board, enclosure, firmware core and twin plant for your project's, add the checks
+   your domain needs, and keep reviewing the CAD and the boards with the agent (ask why, ask for an adversarial pass)
+   before anything goes to a fab.
+
 ## What is in here
 
 ```
@@ -184,15 +198,18 @@ docs/
   PCB.md         generator-first boards: the 12 pipeline steps, determinism, Freerouting, hard lessons, protection rules
   CAD.md         CadQuery builders, the plug-in contract, mass / CG tables, decision images, material decisions
   FIRMWARE.md    out-of-tree builds, host test suites, firmware in the loop against a native twin, bench rigs
-  SIM.md         native twin, Isaac Sim, Unreal: design, file layouts, the prompts to build them (roadmap)
+  SIM.md         the C digital twin, its models and scenarios, the Unreal and Isaac Sim hosts, CUDA Monte Carlo
   SWARM.md       lead / subagent models, waves, briefs, skeptics, integrator, locks, handoffs, single-session mode
   TOOLS.md       what to install, pinned versions and hashes, where it lives, home-directory isolation
-  LESSONS.md     38 lessons: one sentence of symptom, one of rule
+  LESSONS.md     40 lessons: one sentence of symptom, one of rule
 skills/hardware-in-the-loop/
   SKILL.md       the skill: cost warning, mode choice, interview, scaffold, tools, branches, harness, both modes
   references/    interview + answers.json schema, plan templates (swarm and single session), brief, structured
-                 report, resume document, overnight chain + morning questions, wave checklist, agent-rules guide
-  scripts/       scaffold.py (writes the skeleton), setup_tools.ps1 / setup_tools.sh (pinned toolchain)
+                 report, resume document, overnight chain + morning questions, wave checklist, agent-rules guide,
+                 twin-setup (native / Unreal / Isaac / CUDA), firmware-host (C first; ESP32, ESP32-P4, ARM),
+                 research-citations (how to find, verify and cite sources; a verified reading list)
+  scripts/       scaffold.py (writes the skeleton), setup_tools.ps1 / setup_tools.sh (pinned toolchain),
+                 check_twin_tools.ps1 (finds CMake, compilers, Unreal >= 5.8.4, Isaac Sim, CUDA)
   templates/     the project skeleton (see below)
 viewer/          three.js CAD viewer: packer, local server with review notes, PCB-to-JSON exporter
 media/out/       the README graphics and the explainer video
@@ -205,12 +222,18 @@ media/out/       the README graphics and the explainer video
 | Path | What it is | State |
 |---|---|---|
 | `README.md`, `README_AGENT.md`, `PROJECT_STRUCTURE.md`, `REQUIREMENTS.md`, `CODING_RULES.md` | root documents, filled from the interview | ready |
+| `DECISIONS.md`, `QUESTIONS.md`, `CITATION.md` | numbered owner decisions (never edited, superseded by new rows); open questions with the recommended default and a deadline; every model's verified source (16 rows, checked against Crossref / arXiv / publishers) | ready |
+| `sim/twin/` | the C digital twin: rigid body + contact, brushed DC, PMSM + FOC drive, geared joint, thermal network, battery, IMU / baro / range / NTC / ADC models; the example actuator rig running the firmware core; the `hil_twin_api` C ABI; the scenario runner; 9 scenario rows; CUDA Monte Carlo with a CPU reference; CAD-to-twin and ctypes tools | implemented, tested (165 host checks, 20 scenario runs, determinism, ABI from Python) |
+| `firmware/core/` | example portable control core in C11 (homing, cascaded joint control, winding-temperature observer, derating, faults) behind a function-pointer HAL, plus a CRC-framed link codec | implemented, tested |
+| `sim/unreal/` | UE 5.8 plugin (Kinematic and ChaosTorque coupling, scenario player, console commands) and a host project | built with UE 5.8.4, automation tests pass headless (trace hash equals the native runner's); ChaosTorque compiled, its acceptance run is the project's first Unreal step |
+| `sim/isaac/` | fail-closed GPU gate, USD rig authored from the twin's properties, the PhysX harness | gate and USD authoring tested on CPU; the harness is written against the Isaac Sim 6.2 API and not run here |
+| `windows/ci/twin.ps1`, `tools/check_citations.py`, `tools/archive_tmp.py` | CI group `twin`; the citation gate (suite `citations`); the hash-checked `.tmp` to `.archive` mover | implemented, tested |
 | `gitignore.template`, `gitattributes.template` | become `.gitignore` / `.gitattributes` (scratch, harness, KiCad per-user files, fab files as binary) | ready |
 | `windows/ci.ps1`, `windows/ci/ci_common.psm1`, `windows/ci/audit.ps1`, `windows/ci/pcb.ps1` | CI matrix: group registry, parallel pwsh processes, `ci_report.json`, `-Compare -FailOn regressions`; groups `audit` and `pcb` | implemented, tested |
 | `tools/audit_placeholders.py` + baseline / waivers JSON | no-shortcut audit: open-work markers, admitted guesses, Python stubs, hardware functions returning canned success, CAD stand-in names and bare primitives, default credentials; tracked baseline, signed waivers, `--changed-since` | implemented, tested |
 | `tools/check_portability.py` | interpreter line, UTF-8 console, path anchoring, no user-profile paths | implemented, tested |
 | `pcb/tools/kicad_env.py`, `board_pipeline.py`, `distributor_verify.py` | generator-first KiCad 10 pipeline: schematic from data, own footprint library, ERC, placement DRC, Freerouting, clean-up, pours, final DRC with parity, JLCPCB fab set, live LCSC verification, STEP, fit JSON, results JSON with SHA-256s | implemented, tested end to end |
-| `pcb/example_board/gen_example_board.py` | a real 2-layer 3.3 V LDO breakout (TVS, PTC with sense line, redundant power / ground pins) | runs green in about 20 s |
+| `pcb/example_board/gen_example_board.py` | a real 2-layer 3.3 V LDO breakout (TVS, PTC with sense line, redundant power / ground pins, every part behind the TVS rated above its clamp) | runs green in about 15 s |
 | `pcb/DESIGN_STANDARDS.md` | rule book skeleton with rule ids and a project decision table | ready (a machine checker for the rule ids is roadmap) |
 | `cad/cad_plugins.py`, `cad/render.py`, `cad/mass_cg_table.py` | plug-in loader, decision renders (clash in red, dimensions), weight-and-balance table | implemented, tested |
 | `cad/examples/enclosure/` | sealed enclosure builder + gasket and gland-access plug-ins | runs, checks pass |
@@ -241,8 +264,8 @@ Nothing here is sold as done that is not. The right column is designed and writt
 | Gates | CI matrix, audit, portability, ERC / DRC re-check, regression compare | a standards checker that implements the DESIGN_STANDARDS rule ids |
 | PCB | full generator pipeline with Freerouting, live part verification, fab set, STEP | in-house completion router for fine-pitch escapes, BGA fan-out helpers, panelization |
 | CAD | plug-in contract, renders, mass / CG tables, example builder | interference check with exact contact areas, STEP-based catalogue part import |
-| Firmware | host check library, the twin pattern and its rules | a twin template project (physics + device models + station protocol) |
-| Simulation | native twin design | Isaac Sim and Unreal tiers (design, layouts and prompts in SIM.md) |
+| Firmware | host check library, a C firmware core behind a HAL, the twin pattern, ESP32 / ESP32-P4 / ARM guidance | register-level device models and a lockstep RTOS shim for unmodified `main.c` (described in firmware-host.md) |
+| Simulation | native C twin with models, scenarios, seeds, determinism, Monte Carlo (CPU + CUDA); Unreal plugin with hash parity; Isaac Sim harness | ChaosTorque and Isaac runs validated on a project's own rig; rendered sensor models (cameras, depth); bench-versus-twin comparison tooling |
 | Viewer | parts, sections, notes, mass / CG, materials, PCB and harness overlays | copper layers, harness clearance and bend-radius checks, measurements, exploded view, build-to-build diff |
 | Orchestration | slots, detached jobs, watchers, merge lock, dev / main, WIP backup, usage tripwire, templates for plans, briefs, reports, resume documents, overnight chains | |
 

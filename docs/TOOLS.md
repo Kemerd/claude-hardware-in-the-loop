@@ -24,8 +24,13 @@ SHA-256 hashes before using a download, and writes `<ToolsRoot>\hil_tools.env` w
 | PowerShell | 7 (pwsh) | CI entry point and runners | Program Files | `winget install Microsoft.PowerShell` |
 | Git + Git Bash | current | worktrees, the harness scripts (bash) | Program Files | `winget install Git.Git` |
 | ESP-IDF | the release you pin (optional) | ESP32 targets | `<ToolsRoot>\esp-idf`, tools in `<ToolsRoot>\espressif` (`IDF_TOOLS_PATH`) | Espressif installer or a `git clone --recursive` of the pinned tag; the setup script prints the steps with `-WithEspIdf` |
-| Isaac Sim | optional | tier-2 simulation | a tools drive, own venv | NVIDIA's instructions; GPU gated (see SIM.md) |
-| Unreal Engine | optional | tier-3 visual twin | a tools drive | Epic launcher or source build |
+| CMake, a C11 / C++17 compiler, Ninja | CMake >= 3.20; clang 18+ (tested 20.1), MSVC or gcc | the native twin and the firmware host suites | Program Files | `winget install Kitware.CMake LLVM.LLVM Ninja-build.Ninja` (Visual Studio ships Ninja too) |
+| Unreal Engine | 5.8.4 or newer (tested 5.8.4) | the recommended twin host (Kinematic replay, Chaos coupling, rendering) | a large non-system drive | Epic Games Launcher > Unreal Engine > Library; or a source build; plus the Visual Studio version its release notes name with "Game development with C++" |
+| Isaac Sim | the release you pin (harness written against 6.2) | alternative twin host on PhysX | a tools drive, its own venv with the Python version that release requires | `pip install "isaacsim[all,extscache]==<version>" --extra-index-url https://pypi.nvidia.com`; GPU gated (see SIM.md) |
+| NVIDIA driver / CUDA toolkit | driver: current; toolkit 12.x+ only to regenerate PTX | the twin's optional GPU Monte Carlo | Program Files | the driver installer; the toolkit from developer.nvidia.com |
+
+`skills/hardware-in-the-loop/scripts/check_twin_tools.ps1` finds all of the twin's tools and prints what is
+missing; it never installs anything.
 
 The OSS CAD Suite components are used as external tools only; nothing of them is linked into or shipped with a
 bitstream. Check each component's licence in the suite's `license/` folder against your project's licence rules.

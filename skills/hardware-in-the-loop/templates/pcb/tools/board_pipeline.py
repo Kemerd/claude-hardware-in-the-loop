@@ -283,6 +283,7 @@ class Board:
         self.B = None
         self._fps: dict = {}
         self._nets: dict = {}
+        self.net_limit: dict[str, dict] = {}
         self.root_uuid = self._uuid("root")
         self.sym_uuid: dict[str, str] = {}
 
@@ -290,7 +291,8 @@ class Board:
     #  Declaration API (what a board script calls)
     # -----------------------------------------------------------------------------------------------------------------
     def part(self, ref: str, value: str, mpn: str, footprint: str, pins: list[tuple[str, str, str]], nets: dict, *,
-             code: str = "", distributor: str = "LCSC", height_mm: float = 1.0, note: str = "", in_bom: bool = True) -> str:
+             code: str = "", distributor: str = "LCSC", height_mm: float = 1.0, note: str = "", in_bom: bool = True,
+             abs_max_v: dict | None = None, tvs: dict | None = None, series: bool = False) -> str:
         """
         Declare one part.
           footprint  "Lib:Name" (a stock KiCad footprint, localized into the board library) or "@Name" (a custom
@@ -299,6 +301,12 @@ class Board:
           nets       {pin number or pin name: net name}; a name maps every pin of that name (e.g. "GND" on a QFN).
                      Pins left out get a no-connect flag.
           code       distributor order code (LCSC "C..." for JLCPCB assembly); empty = not bought through it.
+          abs_max_v  {pin number or name: absolute-maximum voltage to GND from the datasheet}; required for every
+                     power_in pin on a net a TVS protects (rule TVS-02), useful on every part that has one
+          tvs        for a TVS / ESD diode: {"vrwm": stand-off V, "vbr_min": breakdown min V, "vc_max": clamp V at
+                     its rated pulse current}, all from the datasheet table
+          series     True for a part that passes a fast transient through (PTC, ferrite, 0 ohm link, fuse): the
+                     nets on both sides share the TVS clamp as their worst case
         """
         if not re.fullmatch(r"[A-Z]+[0-9]+", ref or ""):
             raise PipelineError(f"{self.name}: reference {ref!r} must look like R1 / U12 / J3")
@@ -334,8 +342,45 @@ class Board:
         self.parts.append({"ref": ref, "value": str(value), "mpn": str(mpn), "fp": footprint,
                            "pins": [(str(a), str(b), str(c)) for a, b, c in pins], "conn": conn, "code": str(code or ""),
                            "distributor": distributor if code else "", "height_mm": float(height_mm), "note": note,
-                           "in_bom": bool(in_bom)})
+                           "in_bom": bool(in_bom), "abs_max_v": self._ratings(ref, pins, abs_max_v),
+                           "tvs": self._tvs_params(ref, tvs), "series": bool(series)})
         return ref
+
+    def _ratings(self, ref: str, pins: list, abs_max_v: dict | None) -> dict:
+        """{pin number: volts} from a {number or name: volts} map; unknown keys and non-positive values refused."""
+        out: dict[str, float] = {}
+        for key, v in (abs_max_v or {}).items():
+            nums = [str(n) for n, nm, _ in pins if str(n) == str(key) or str(nm) == str(key)]
+            if not nums or not isinstance(v, (int, float)) or not v > 0:
+                raise PipelineError(f"{self.name}: {ref} abs_max_v {key!r}: {v!r} (pin unknown or rating not > 0)")
+            for n in nums:
+                out[n] = float(v)
+        return out
+
+    def _tvs_params(self, ref: str, tvs: dict | None) -> dict | None:
+        """Validate the TVS datasheet numbers: vrwm < vbr_min < vc_max, all positive."""
+        if tvs is None:
+            return None
+        try:
+            vrwm, vbr, vc = float(tvs["vrwm"]), float(tvs["vbr_min"]), float(tvs["vc_max"])
+        except (KeyError, TypeError, ValueError):
+            raise PipelineError(f"{self.name}: {ref} tvs needs numbers vrwm, vbr_min, vc_max") from None
+        if not (0 < vrwm < vbr < vc):
+            raise PipelineError(f"{self.name}: {ref} tvs numbers must satisfy 0 < vrwm < vbr_min < vc_max")
+        return {"vrwm": vrwm, "vbr_min": vbr, "vc_max": vc}
+
+    def net_limits(self, net: str, *, operating_max: float | None = None, worst: float | None = None,
+                   basis: str = "") -> None:
+        """
+        Declare what a net sees: operating_max = the highest normal voltage (a TVS on it must stand off at least
+        that); worst = the transient worst case on a net no TVS sits on directly (a divider output, a node behind
+        a regulator), with the reasoning in basis. Both feed rule TVS-02.
+        """
+        if operating_max is None and worst is None:
+            raise PipelineError(f"{self.name}: net_limits({net!r}) needs operating_max or worst")
+        if worst is not None and not basis:
+            raise PipelineError(f"{self.name}: net_limits({net!r}, worst=...) needs the basis of the number")
+        self.net_limit[net] = {"operating_max": operating_max, "worst": worst, "basis": basis}
 
     def custom_footprint(self, name: str, pads: list[dict], *, descr: str, courtyard: tuple[float, float],
                          body: tuple[float, float] | None = None, attr: str = "smd") -> str:
@@ -505,6 +550,64 @@ class Board:
             self._write_custom(name, self.custom_fps[name])
         return name
 
+    def _check_protection(self, problems: list[str]) -> list[dict]:
+        """
+        Rule TVS-02, protection coordination. Every net a TVS sits on, plus every net joined to it through a part
+        declared series=True (a PTC, a ferrite: a fast transient passes them), has the TVS clamp voltage as its worst
+        case; net_limits(worst=...) adds worst cases for derived nets (a divider output). Then:
+          - every pin with an abs_max_v on such a net must be rated at or above the worst case;
+          - every power_in pin on such a net must declare its abs_max_v (an unrated supply pin is a finding);
+          - a TVS whose stand-off is below the net's declared operating_max conducts in normal operation.
+        Returns one record per protected net for the results JSON.
+        """
+        worst: dict[str, tuple[float, str]] = {}
+        for p in self.parts:
+            t = p.get("tvs")
+            if not t:
+                continue
+            # ---- the clamp spreads through series parts, breadth first
+            start = {n for n in p["conn"].values() if n != "GND"}
+            seen, todo = set(start), list(start)
+            while todo:
+                net = todo.pop()
+                for q in self.parts:
+                    if q.get("series") and net in q["conn"].values():
+                        for other in q["conn"].values():
+                            if other not in seen and other != "GND":
+                                seen.add(other)
+                                todo.append(other)
+            for net in sorted(seen):
+                if net not in worst or t["vc_max"] < worst[net][0]:
+                    worst[net] = (t["vc_max"], f"{p['ref']} clamp {t['vc_max']:g} V")
+            for net in sorted(start):
+                op = (self.net_limit.get(net) or {}).get("operating_max")
+                if op is not None and t["vrwm"] < op:
+                    problems.append(f"TVS-02: {p['ref']} stand-off {t['vrwm']:g} V is below the operating maximum "
+                                    f"{op:g} V of {net}: it conducts in normal operation")
+        for net, lim in self.net_limit.items():
+            if lim.get("worst") is not None and net not in worst:
+                worst[net] = (float(lim["worst"]), lim.get("basis", ""))
+        records = []
+        for net, (v, why) in sorted(worst.items()):
+            rated = []
+            for p in self.parts:
+                for num, pnet in p["conn"].items():
+                    if pnet != net:
+                        continue
+                    etype = next((e for n, _, e in p["pins"] if n == num), "")
+                    amax = p.get("abs_max_v", {}).get(num)
+                    if amax is None:
+                        if etype == "power_in":
+                            problems.append(f"TVS-02: {p['ref']}.{num} ({etype}) on {net} (worst {v:g} V, {why}) "
+                                            f"declares no abs_max_v: read it from the datasheet")
+                        continue
+                    rated.append(f"{p['ref']}.{num} {amax:g} V")
+                    if amax < v:
+                        problems.append(f"TVS-02: {p['ref']}.{num} is rated {amax:g} V but {net} reaches {v:g} V "
+                                        f"({why}): pick a part rated above the clamp, or a lower clamp")
+            records.append({"net": net, "worst_v": v, "basis": why, "rated_pins": rated})
+        return records
+
     def check_design(self) -> dict:
         """Pin table vs footprint pads, single-pin nets, placement completeness. Any finding stops the run."""
         problems: list[str] = []
@@ -524,8 +627,10 @@ class Board:
                 problems.append(f"net {net} has one pin only ({members[0]}): a dangling label")
         if not self.outline_pts:
             problems.append("no outline")
+        protection = self._check_protection(problems)
         self.nets = nets
-        self.res["steps"]["design"] = {"parts": len(self.parts), "nets": len(nets), "problems": problems}
+        self.res["steps"]["design"] = {"parts": len(self.parts), "nets": len(nets), "protection": protection,
+                                       "problems": problems}
         if problems:
             raise PipelineError(f"{self.name}: design check failed:\n  " + "\n  ".join(problems))
         return self.res["steps"]["design"]

@@ -119,6 +119,8 @@ in the morning go into the standing decisions. Templates: `skills/hardware-in-th
 
 ## 9. Owner decisions
 
-Decisions for the owner are batched into the question dialog (at most four per batch), recommended default first. With
-no answer, the default is taken and written into the plan; settled decisions go into the "Standing owner decisions"
-table of `AGENT_RULES.md` so nobody asks twice.
+Decisions for the owner are batched into the question dialog (at most four per batch), recommended default first, and
+written into `QUESTIONS.md` with what they block and when the default will be taken. With no answer, the default is
+taken and recorded. Every settled decision is a numbered row of `DECISIONS.md` (never edited; a change is a new row
+that supersedes the old one), mirrored in the "Standing owner decisions" table of `AGENT_RULES.md`, so nobody asks
+twice. Every model, constant and algorithm cites a source verified by opening it, in `CITATION.md`.

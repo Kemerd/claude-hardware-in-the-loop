@@ -190,6 +190,15 @@ Follow `references/twin-setup.md`. In short:
   drive root (search only named project or tool folders), check disk first, one Unreal / GPU job at a time, GPU only
   through the gate with `HIL_GPU=1` for that job, no engine launch while the owner is at the machine unless agreed.
 
+## 8b. Before anything real is ordered
+
+Green gates are necessary, not sufficient. Before a board, a part or a print is ordered: walk the owner through the
+CAD renders and the board (layout, stack-up, BOM with the ratings), answer "why" for every part and number with the
+datasheet line or decision behind it, and run an adversarial review pass: fresh agents get the files (schematic,
+board, BOM, CAD exports, firmware diff, twin results), not your conclusions, and hunt for what the gates do not
+check. Findings go into the report; the owner decides the order. Keep it friendly and brief; the point is a second
+pair of eyes, not a ceremony.
+
 ## 9. Handoff and overnight
 
 - When `HANDOFF_NOW` appears (the hook tells you), stop starting work and follow its instruction: commit, push, release,

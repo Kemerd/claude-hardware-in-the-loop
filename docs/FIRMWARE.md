@@ -1,5 +1,10 @@
 # Firmware: out-of-tree builds, host suites, firmware in the loop, bench rigs
 
+The language: **C** (C11; C++17 only where an SDK needs it). No interpreter in shipped firmware: the control core
+must compile unchanged for the board and for the twin. Python is for tools, CAD and the Isaac Sim harness. The
+skeleton ships an example core in `firmware/core/`; target-specific wiring for ESP32, ESP32-P4, STM32, RP2040, nRF
+and Arduino is in `skills/hardware-in-the-loop/references/firmware-host.md`.
+
 The rule: the code that flies, drives or regulates on the hardware is the same code that runs in CI. It is compiled for
 the PC, fed by models of the sensors and actuators, and checked by thousands of assertions on every change. What
 cannot be closed without hardware is listed as hardware-pending, never stubbed.

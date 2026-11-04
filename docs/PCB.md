@@ -28,7 +28,7 @@ Files (in the skill's templates, copied into a project as `pcb/`):
 
 | # | Step | Tool | Stops the run when |
 |---|---|---|---|
-| 1 | design checks: every symbol pin has a footprint pad and vice versa, no single-pin nets, every part placed | python | any finding |
+| 1 | design checks: every symbol pin has a footprint pad and vice versa, no single-pin nets, every part placed, protection coordination (TVS-02: the clamp of every TVS, carried through series parts and declared divider nodes, against every rated pin; unrated supply pins are findings) | python | any finding |
 | 2 | board library: every footprint copied into the board's OWN `<board>_lib.pretty` | python (text) | a stock footprint is missing |
 | 3 | schematic + symbol library + project + lib tables written from the data | python (text) | |
 | 4 | ERC | `kicad-cli sch erc --severity-all` | any error or warning |
@@ -159,6 +159,7 @@ From `pcb/DESIGN_STANDARDS.md`; the example board shows each one.
 | RED-01 | two or more contacts per power / ground net per connector | J2: +3V3 on pins 1 and 2, GND on 3, 4 and 6 |
 | DER-01 | derating | 16 V / 10 V ceramics on 5 V / 3.3 V rails |
 | TVS-01 | TVS on connector power pins | D1 SMAJ6.0CA across J1 |
+| TVS-02 | every part behind a TVS rated above its clamp (machine check in step 1) | D1 clamps at 10.3 V: U1 TPS70933 IN rated 32 V, C1 16 V, F1 24 V; EN on the 22 k : 10 k divider sees 3.2 V of its 7 V |
 | EMC-02 | return-path stitching | four locked GND stitching vias between the two pours |
 | EMC-03 | hot-loop rule (switchers) | C1 / C2 placed at U1's pins (linear regulator, same placement discipline) |
 
@@ -173,13 +174,13 @@ Numbers from the test run on 2026-11-03 (KiCad 10.0.6, Freerouting 2.1.0, Java 2
 
 | Step | Result |
 |---|---|
-| design | 11 parts, 6 nets, 0 problems |
+| design | 11 parts, 6 nets, 0 problems; TVS-02: VIN / VIN_PROT worst 10.3 V, VSENSE worst 3.22 V, every rated pin above |
 | schematic | 11 symbols, 2 power flags (VIN_PROT, GND) |
 | ERC | 0 errors, 0 warnings |
 | placement DRC | 0 errors, 0 warnings, 0 parity; 26 unconnected before routing; 4 `via_dangling` on the locked stitching vias (expected before the pours; set aside by count, never by type alone) |
 | routing | Freerouting 2.1, 1 thread, 40 passes max, 5.6 s; 2 remnant segments removed |
 | final DRC | 0 errors, 0 warnings, 0 unconnected, 0 parity; routed 100 % |
-| distributor | 10 lines verified live against LCSC, 0 mismatch, 0 unverified |
+| distributor | every purchased line verified live against LCSC (11 on the 2026-11-04 re-run after the TVS-02 fix), 0 mismatch, 0 unverified |
 | fab | 15 files (9 Gerbers + job file, drill, pos, CPL, BOM, zip) + STEP (865 kB) |
 | whole run | 21 s with the router, 18 s from the frozen route |
 
@@ -195,8 +196,8 @@ distributor returned, brand, package, stock), `fab.files` (SHA-256 per file), `f
 
 ## 9. Roadmap
 
-- **Standards checker** (`pcb/tools/standards_check.py`): implement the machine rows of DESIGN_STANDARDS.md (PROT-01..03,
-  RED-01, DER-01, TVS-01, EMC-02/03/04) over the board file and the BOM, printing rule ids; report-only first, then a CI
+- **Standards checker** (`pcb/tools/standards_check.py`): implement the remaining machine rows of DESIGN_STANDARDS.md
+  (PROT-01..03, RED-01, DER-01, TVS-01, EMC-02/03/04; TVS-02 is already in the pipeline's design step) over the board file and the BOM, printing rule ids; report-only first, then a CI
   gate once the boards are clean.
 - **Completion router** for what Freerouting cannot do: fine-pitch (0.4-0.5 mm) escapes where its maze search fails, with
   clearance-exact A* and the frozen-route mechanism for the result.
