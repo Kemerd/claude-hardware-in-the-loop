@@ -67,3 +67,49 @@ add_executable(test_twin_models tests/test_twin_models.c)
 target_include_directories(test_twin_models PRIVATE "${HIL_CHECK_DIR}")
 target_link_libraries(test_twin_models PRIVATE hil_twin_models)
 target_compile_options(test_twin_models PRIVATE ${HIL_FP_FLAGS})
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  The firmware core, compiled unchanged from firmware/core (the same sources the target build uses)
+# ---------------------------------------------------------------------------------------------------------------------
+add_library(hil_core STATIC "${HIL_CORE_DIR}/src/ctrl.c" "${HIL_CORE_DIR}/src/link.c")
+target_include_directories(hil_core PUBLIC "${HIL_CORE_DIR}/include")
+target_compile_options(hil_core PRIVATE ${HIL_FP_FLAGS})
+if(UNIX)
+  target_link_libraries(hil_core PUBLIC m)
+endif()
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  The example plant and the C ABI. Built twice: a static copy for the host suites, the shared library for hosts.
+# ---------------------------------------------------------------------------------------------------------------------
+set(HIL_PLANT_SOURCES src/plant.c src/twin_api.c)
+
+add_library(hil_twin_static STATIC ${HIL_PLANT_SOURCES})
+target_include_directories(hil_twin_static PUBLIC include src)
+target_compile_definitions(hil_twin_static PUBLIC HIL_TWIN_STATIC)
+target_link_libraries(hil_twin_static PUBLIC hil_twin_models hil_core)
+target_compile_options(hil_twin_static PRIVATE ${HIL_FP_FLAGS})
+
+add_library(hil_twin_api SHARED ${HIL_PLANT_SOURCES})
+target_include_directories(hil_twin_api PUBLIC include PRIVATE src)
+target_compile_definitions(hil_twin_api PRIVATE HIL_TWIN_BUILD_DLL)
+target_link_libraries(hil_twin_api PRIVATE hil_twin_models hil_core)
+target_compile_options(hil_twin_api PRIVATE ${HIL_FP_FLAGS})
+set_target_properties(hil_twin_api PROPERTIES C_VISIBILITY_PRESET hidden PREFIX "")
+
+# ---- the runner talks to the twin only through the shared library, like any engine host
+add_executable(hil_twin src/twin_main.c)
+target_link_libraries(hil_twin PRIVATE hil_twin_api hil_core)
+target_compile_options(hil_twin PRIVATE ${HIL_FP_FLAGS})
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Host suites of the firmware core and of the ABI
+# ---------------------------------------------------------------------------------------------------------------------
+add_executable(test_hil_core tests/test_hil_core.c)
+target_include_directories(test_hil_core PRIVATE "${HIL_CHECK_DIR}")
+target_link_libraries(test_hil_core PRIVATE hil_core)
+target_compile_options(test_hil_core PRIVATE ${HIL_FP_FLAGS})
+
+add_executable(test_twin_api tests/test_twin_api.c)
+target_include_directories(test_twin_api PRIVATE "${HIL_CHECK_DIR}")
+target_link_libraries(test_twin_api PRIVATE hil_twin_static)
+target_compile_options(test_twin_api PRIVATE ${HIL_FP_FLAGS})

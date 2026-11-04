@@ -1,0 +1,96 @@
+# =====================================================================================================================
+#  example_rig_bldc.txt - the same rig with a brushless (PMSM) motor behind a FOC drive in torque mode
+#  (the SimpleFOC / ODrive / VESC way of driving a robot joint). Only the motor section and the matching firmware
+#  constants differ from example_rig.txt. A project would move the shared sections into one included file; the
+#  example keeps each file complete so it reads top to bottom.
+# =====================================================================================================================
+
+dt_s = 0.001
+gravity_m_s2 = 9.80665
+trace.decimate = 10
+include = example_link_mass.txt
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Motor: PMSM in dq [REF-016]; a 100 rpm/V outrunner class motor. Kt = 60 / (2 pi Kv) = 0.0955 N m/A,
+#  psi_m = Kt / (1.5 p). Drive current loop tuned for ~1 kHz bandwidth: Kp = L w_bw, Ki = R w_bw.
+# ---------------------------------------------------------------------------------------------------------------------
+motor.kind = pmsm
+motor.pmsm.r_ohm = 0.5             # datasheet phase-to-phase resistance / 2
+motor.pmsm.ld_h = 0.0002           # datasheet phase inductance
+motor.pmsm.lq_h = 0.0002           # surface magnets: Ld = Lq
+motor.pmsm.psi_m_vs = 0.0091       # from Kv: 0.0955 / (1.5 x 7)
+motor.pmsm.pole_pairs = 7          # 14 magnet poles
+motor.pmsm.j_rotor_kgm2 = 3.0e-5   # datasheet rotor inertia
+motor.pmsm.alpha_cu = 0.00393
+motor.pmsm.i_max_a = 10.0          # drive hardware current limit
+motor.pmsm.drive_kp_v_per_a = 1.26
+motor.pmsm.drive_ki_v_per_as = 3140
+motor.pmsm.drive_substeps = 20     # 20 kHz current loop inside the 1 kHz twin step
+
+joint.ratio = 9                    # single-stage planetary
+joint.efficiency = 0.9
+joint.b_out_nms = 0.01             # design value, BENCH B-JNT-01
+joint.tau_coulomb_nm = 0.05        # design value, BENCH B-JNT-02
+joint.qd_slip_rad_s = 0.01
+joint.q_min_rad = -1.75
+joint.q_max_rad = 1.75
+joint.k_stop_nm_per_rad = 200      # design value, BENCH B-JNT-03
+joint.c_stop_nms = 2.0
+joint.q0_rad = -1.5708
+
+battery.capacity_ah = 2.5
+battery.n_series = 3
+battery.r0_ohm = 0.06              # design value, BENCH B-PWR-01
+battery.r1_ohm = 0.03
+battery.c1_f = 2000
+battery.ocv_points = 7
+battery.ocv_soc_v = 0 3.00  0.1 3.45  0.2 3.55  0.4 3.65  0.6 3.80  0.8 3.95  1 4.20
+battery.soc0 = 0.9
+battery.i_quiescent_a = 0.12       # MCU + FOC drive logic
+
+thermal.ambient_c = 25
+thermal.nodes = winding case battery
+thermal.winding.c_j_per_k = 15
+thermal.case.c_j_per_k = 80
+thermal.case.g_amb_w_per_k = 0.4   # design value, BENCH B-THM-01
+thermal.battery.c_j_per_k = 130
+thermal.battery.g_amb_w_per_k = 0.3
+thermal.links = winding:case:1.0
+thermal.winding_node = winding
+thermal.case_node = case
+thermal.battery_node = battery
+
+sensor.encoder_cpr = 16384         # 14-bit magnetic angle sensor on the motor shaft
+sensor.isense_v_per_a = 0.1        # the drive reports iq through an analog monitor: 0.1 V/A around mid-rail
+sensor.isense_gain_sigma = 0.01
+sensor.isense_offset_v = 1.65
+sensor.isense_offset_sigma_v = 0.005
+sensor.vbat_divider = 5.0
+sensor.ntc_r25_ohm = 10000
+sensor.ntc_beta_k = 3950
+sensor.ntc_r_top_ohm = 10000
+sensor.adc_bits = 12
+sensor.adc_vref_v = 3.3
+sensor.adc_noise_lsb = 1.0
+
+fw.encoder_cpr = 16384
+fw.gear_ratio = 9
+fw.gear_efficiency = 0.9
+fw.kt_nm_per_a = 0.0955
+fw.adc_bits = 12
+fw.adc_vref_v = 3.3
+fw.vbat_divider = 5.0
+fw.isense_v_per_a = 0.1
+fw.isense_offset_v = 1.65
+fw.ntc_r25_ohm = 10000
+fw.ntc_beta_k = 3950
+fw.ntc_r_top_ohm = 10000
+fw.gravity_nm = 0.4413
+fw.i_max_a = 8.0
+fw.r_ohm = 0.5                     # phase resistance, for the winding observer (P = 1.5 R i^2)
+fw.winding_rth_k_per_w = 1.0       # motor datasheet winding-to-housing thermal resistance
+fw.winding_tau_s = 15              # motor datasheet winding thermal time constant
+fw.q_home_rad = -1.75
+fw.q_soft_min_rad = -1.6
+fw.q_soft_max_rad = 1.6
+fw.tune.home_current_a = 2.0

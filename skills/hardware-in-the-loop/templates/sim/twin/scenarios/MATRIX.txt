@@ -1,0 +1,13 @@
+# Scenario matrix: which scenario runs against which params file, and over how many seeds.
+# windows/ci/twin.ps1 reads this file (suite twin_scenarios: every row x seeds 1..N; suite twin_determinism: the
+# first row twice at seed 1, the two trace files must have the same SHA-256).
+# Columns: params file (relative to sim/twin/params)  scenario (relative to sim/twin/scenarios)  seeds
+example_rig.txt         reach.scn            3
+example_rig.txt         overload.scn         2
+example_rig.txt         hot_ambient.scn      2
+example_rig.txt         encoder_fault.scn    2
+example_rig.txt         stall.scn            2
+example_rig_bldc.txt    reach.scn            3
+example_rig_bldc.txt    overload_bldc.scn    2
+example_rig_bldc.txt    hot_ambient.scn      2
+example_rig_bldc.txt    encoder_fault.scn    2

@@ -1,0 +1,11 @@
+# overload: hold horizontal while a payload torque loads the joint for five minutes. The firmware must derate on
+# the motor NTC and keep the winding below its insulation class (class B, 130 degC) without tripping.
+name = overload
+duration_s = 300
+at 0.2 arm 1
+at 5.0 set_pos 0.0
+at 8.0 set ext_torque_nm -1.8
+accept homed == 1
+accept fault == 0
+accept min_derate < 0.999
+accept max_t_winding_c < 130

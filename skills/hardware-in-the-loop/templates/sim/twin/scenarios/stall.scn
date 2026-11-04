@@ -1,0 +1,13 @@
+# stall: a payload beyond what the brushed rig can hold at full current. The joint is driven into the lower stop;
+# with full (un-derated) current and no motion for stall_time_s the firmware must raise HIL_FAULT_STALL (64) and
+# stop driving, instead of cooking the motor against the stop.
+name = stall
+duration_s = 15
+at 0.2 arm 1
+at 5.0 set_pos 0.0
+at 7.0 set ext_torque_nm -3.5
+accept homed == 1
+accept fault == 64
+accept state == 3
+accept final_abs_i_a < 0.05
+accept max_t_winding_c < 130

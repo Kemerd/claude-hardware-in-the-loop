@@ -1,0 +1,12 @@
+# overload_bldc: the brushless rig has more torque, so it gets a heavier payload. Hold horizontal under the load
+# for five minutes: the firmware must derate on its winding estimate and keep the winding below class B (130 degC)
+# without tripping.
+name = overload_bldc
+duration_s = 300
+at 0.2 arm 1
+at 5.0 set_pos 0.0
+at 8.0 set ext_torque_nm -3.5
+accept homed == 1
+accept fault == 0
+accept min_derate < 0.999
+accept max_t_winding_c < 130

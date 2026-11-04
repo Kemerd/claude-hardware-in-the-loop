@@ -1,0 +1,11 @@
+# encoder_fault: the encoder stops answering mid-move. The firmware must fault (HIL_FAULT_ENCODER = 1) and stop
+# driving; the joint then falls back to hanging under gravity on its own friction.
+name = encoder_fault
+duration_s = 12
+at 0.2 arm 1
+at 5.0 set_pos 1.0
+at 6.0 set fault.encoder 1
+accept homed == 1
+accept fault == 1
+accept state == 3
+accept final_abs_i_a < 0.05

@@ -1,0 +1,14 @@
+# hot_ambient: the same reach after a thermal soak at 75 degC (a rig left in a hot enclosure): the firmware must
+# start derated and still reach its targets, and keep the winding below class B.
+name = hot_ambient
+duration_s = 16
+at 0.0 set soak_c 75
+at 0.2 arm 1
+at 5.0 set_pos 0.5
+at 8.0 set_pos -0.8
+at 11.0 set_pos 1.2
+accept homed == 1
+accept fault == 0
+accept final_err_rad < 0.02
+accept min_derate < 0.999
+accept max_t_winding_c < 130

@@ -1,0 +1,112 @@
+# =====================================================================================================================
+#  example_rig.txt - single-joint actuator rig, brushed DC gearmotor (a 12 V 37 mm class gearmotor on an H-bridge)
+#
+#  Every number has a source next to it. The example's sources are generic datasheet-class values; a real project
+#  replaces each with its part's datasheet table, a CAD export, or a BENCH register id, and adds the reference to
+#  CITATION.md. Units are in the key names. Two kinds of keys:
+#    plant truth (motor.*, joint.*, battery.*, thermal.*, sensor.*)  what the hardware IS (the twin's models)
+#    firmware view (fw.*)                                              what the firmware BELIEVES (board constants)
+#  They are kept apart on purpose: a wrong divider or encoder resolution in fw.* is a firmware bug the twin must
+#  show, so never compute one from the other.
+#  The loader refuses unknown keys (a typo) and keys defined twice.
+# =====================================================================================================================
+
+dt_s = 0.001                       # = HIL_CORE_DT, the firmware tick (lockstep)
+gravity_m_s2 = 9.80665
+trace.decimate = 10                # one trace row per 10 ms
+
+# ---- link mass properties: generated from the CAD export by tools/cad_to_twin.py (never edit by hand)
+include = example_link_mass.txt
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Motor: brushed DC [REF-007]; motor datasheet: terminal resistance, inductance, torque constant, rotor inertia
+# ---------------------------------------------------------------------------------------------------------------------
+motor.kind = dc
+motor.dc.r20_ohm = 2.0             # datasheet terminal resistance at 20 degC
+motor.dc.l_h = 0.001               # datasheet terminal inductance
+motor.dc.kt_nm_per_a = 0.02        # datasheet torque constant (= back-EMF constant in V s/rad)
+motor.dc.j_rotor_kgm2 = 2.0e-6     # datasheet rotor inertia
+motor.dc.i_max_a = 5.0             # H-bridge hardware current limit (driver datasheet)
+motor.dc.alpha_cu = 0.00393        # copper
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Gearbox and joint [REF-015]
+# ---------------------------------------------------------------------------------------------------------------------
+joint.ratio = 50                   # gearhead datasheet reduction
+joint.efficiency = 0.7             # gearhead datasheet max efficiency
+joint.b_out_nms = 0.01             # viscous friction at the output: design value, BENCH B-JNT-01
+joint.tau_coulomb_nm = 0.05        # breakaway torque at the output: design value, BENCH B-JNT-02
+joint.qd_slip_rad_s = 0.01
+joint.q_min_rad = -1.75            # hard stop below hanging (CAD: stop block angle)
+joint.q_max_rad = 1.75
+joint.k_stop_nm_per_rad = 200      # stop block compliance: design value, BENCH B-JNT-03
+joint.c_stop_nms = 2.0
+joint.q0_rad = -1.5708             # boots hanging under gravity
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Battery: 3S Li-ion pack [REF-010]; OCV curve from the cell datasheet discharge curve at C/5
+# ---------------------------------------------------------------------------------------------------------------------
+battery.capacity_ah = 2.5
+battery.n_series = 3
+battery.r0_ohm = 0.06              # pack DC resistance: design value, BENCH B-PWR-01 (pulse test)
+battery.r1_ohm = 0.03              # pulse-test fit: design value, BENCH B-PWR-01
+battery.c1_f = 2000
+battery.ocv_points = 7
+battery.ocv_soc_v = 0 3.00  0.1 3.45  0.2 3.55  0.4 3.65  0.6 3.80  0.8 3.95  1 4.20
+battery.soc0 = 0.9
+battery.i_quiescent_a = 0.08       # MCU + sensors from the board power budget
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Thermal network [REF-008]: motor winding -> motor case -> ambient, battery -> ambient
+# ---------------------------------------------------------------------------------------------------------------------
+thermal.ambient_c = 25
+thermal.nodes = winding case battery
+thermal.winding.c_j_per_k = 8      # copper mass x 385 J/(kg K)
+thermal.case.c_j_per_k = 60        # motor + gearhead mass x specific heat
+thermal.case.g_amb_w_per_k = 0.25  # natural convection h A: design value, BENCH B-THM-01
+thermal.battery.c_j_per_k = 130    # cell mass x 900 J/(kg K)
+thermal.battery.g_amb_w_per_k = 0.3
+thermal.links = winding:case:0.5   # winding-to-case, motor datasheet thermal resistance 2 K/W
+thermal.winding_node = winding
+thermal.case_node = case
+thermal.battery_node = battery
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Sensors (TRUE hardware, with per-unit tolerances drawn from the seed)
+# ---------------------------------------------------------------------------------------------------------------------
+sensor.encoder_cpr = 48            # 12 PPR magnetic encoder on the motor shaft, x4 decoding
+sensor.isense_v_per_a = 0.2        # 10 mOhm shunt x gain-20 current-sense amplifier
+sensor.isense_gain_sigma = 0.01    # shunt + amplifier gain tolerance, 1 sigma
+sensor.isense_offset_v = 1.65      # mid-rail reference
+sensor.isense_offset_sigma_v = 0.005
+sensor.vbat_divider = 5.0          # 40k / 10k divider
+sensor.ntc_r25_ohm = 10000         # 10k NTC, B25/85 = 3950 (thermistor datasheet) [REF-013]
+sensor.ntc_beta_k = 3950
+sensor.ntc_r_top_ohm = 10000
+sensor.adc_bits = 12
+sensor.adc_vref_v = 3.3
+sensor.adc_noise_lsb = 1.0         # MCU datasheet ADC effective noise
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Firmware view of the board (what hil_core_board_t gets): nominal values from the schematic and datasheets
+# ---------------------------------------------------------------------------------------------------------------------
+fw.encoder_cpr = 48
+fw.gear_ratio = 50
+fw.gear_efficiency = 0.7
+fw.kt_nm_per_a = 0.02
+fw.r_ohm = 2.0
+fw.adc_bits = 12
+fw.adc_vref_v = 3.3
+fw.vbat_divider = 5.0
+fw.isense_v_per_a = 0.2
+fw.isense_offset_v = 1.65
+fw.ntc_r25_ohm = 10000
+fw.ntc_beta_k = 3950
+fw.ntc_r_top_ohm = 10000
+fw.gravity_nm = 0.4413             # m g l_c of the link from the CAD export (0.3 kg x 9.80665 x 0.15 m)
+fw.i_max_a = 4.0
+fw.winding_rth_k_per_w = 2.0       # motor datasheet winding-to-housing thermal resistance
+fw.winding_tau_s = 16              # motor datasheet winding thermal time constant
+fw.q_home_rad = -1.75              # the homing stop angle (CAD)
+fw.q_soft_min_rad = -1.6
+fw.q_soft_max_rad = 1.6

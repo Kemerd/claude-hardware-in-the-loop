@@ -1,0 +1,16 @@
+# reach: home against the stop, then three moves across the range under gravity.
+# Format: "name = ...", "duration_s = ...", "at <t> <command> [value]", "accept <metric> <op> <limit>".
+# Commands go to the firmware over the link (arm, set_pos, stop) or to the environment (set <name> <value>).
+# Metrics are judged from the firmware's telemetry and the plant truth, never from firmware internals.
+name = reach
+duration_s = 16
+at 0.2 arm 1
+at 5.0 set_pos 0.5
+at 8.0 set_pos -0.8
+at 11.0 set_pos 1.2
+accept homed == 1
+accept fault == 0
+accept final_err_rad < 0.02
+accept max_t_winding_c < 80
+accept max_abs_i_a < 4.5
+accept link_bad == 0
