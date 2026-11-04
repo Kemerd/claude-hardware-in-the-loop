@@ -14,6 +14,7 @@
   GROUPS -> SUITES (the $groups registry below is the single source; add a group = add a row + a runner script)
     audit   windows\ci\audit.ps1   audit_placeholders portability
     pcb     windows\ci\pcb.ps1     pcb_erc pcb_drc                     (every pcb\<board>\kicad\<board>.kicad_pro)
+    twin    windows\ci	win.ps1    twin_build twin_tests twin_scenarios twin_determinism twin_abi  (sim	win)
 
   Each group is its own pwsh process; groups run in parallel, "late" groups start after the rest have finished (use it
   for suites that consume what earlier groups build). "default = $false" groups run only when -Only names them.
@@ -88,6 +89,7 @@ Initialize-CiEnvironment $Out
 $groups = [ordered]@{
   audit = @{ script = 'audit.ps1'; suites = @('audit_placeholders', 'portability'); late = $false; default = $true }
   pcb   = @{ script = 'pcb.ps1';   suites = @('pcb_erc', 'pcb_drc');                late = $false; default = $true }
+  twin  = @{ script = 'twin.ps1';  suites = @('twin_build', 'twin_tests', 'twin_scenarios', 'twin_determinism', 'twin_abi'); late = $false; default = $true }
 }
 $known = @($groups.Keys) + @($groups.Values | ForEach-Object { $_.suites })
 $bad = @(@($Only) + @($Skip) | Where-Object { $known -notcontains $_ })
