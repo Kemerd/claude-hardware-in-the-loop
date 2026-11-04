@@ -12,6 +12,7 @@
 #      hil_twin_plant    static library: the example plant (actuator rig) wired to the firmware through the hosted HAL
 #      hil_twin_api      shared library (DLL / .so): the C ABI Unreal, Isaac Sim and any other host load
 #      hil_twin          command-line runner: scenarios, seeds, traces, the one summary line per run
+#      hil_twin_sweep    thermal Monte Carlo sweep, CPU or GPU (gpu/; the GPU only with HIL_GPU=1)
 #      test_twin_models, test_twin_api, test_hil_core   host suites (hil_check.h summary lines)
 # =====================================================================================================================
 cmake_minimum_required(VERSION 3.20)
@@ -113,3 +114,14 @@ add_executable(test_twin_api tests/test_twin_api.c)
 target_include_directories(test_twin_api PRIVATE "${HIL_CHECK_DIR}")
 target_link_libraries(test_twin_api PRIVATE hil_twin_static)
 target_compile_options(test_twin_api PRIVATE ${HIL_FP_FLAGS})
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  Thermal Monte Carlo sweep: CPU reference + CUDA driver-API backend loaded at run time (embedded PTX, no toolkit)
+# ---------------------------------------------------------------------------------------------------------------------
+add_executable(hil_twin_sweep gpu/sweep_main.c gpu/gpu_sweep.c)
+target_include_directories(hil_twin_sweep PRIVATE gpu)
+target_link_libraries(hil_twin_sweep PRIVATE hil_twin_models)
+target_compile_options(hil_twin_sweep PRIVATE ${HIL_FP_FLAGS})
+if(UNIX)
+  target_link_libraries(hil_twin_sweep PRIVATE ${CMAKE_DL_LIBS})
+endif()

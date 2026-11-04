@@ -10,8 +10,10 @@
  The gate passes only when ALL of these hold:
    1. HIL_GPU=1 is set for this job (an explicit opt-in per shell or job; never set it globally; CI sets HIL_GPU=0);
    2. nvidia-smi answers within 10 s;
-   3. no foreign compute process holds the GPU (any process not named in HIL_GPU_OURS, comma separated, counts as
-      foreign; a garbled row counts as foreign). --allow-shared skips this check for an owner-approved co-run;
+   3. no foreign compute JOB holds the GPU. On Windows (WDDM) every desktop app with a GPU context is listed as a
+      "compute app", so only executables that run compute work count: names starting with python, kit or isaac,
+      plus any name in HIL_GPU_WATCH (comma separated, e.g. "ollama.exe,blender.exe"); a garbled row counts as
+      foreign. --allow-shared skips this check for an owner-approved co-run;
    4. at least --min-free-mb of VRAM is free.
  It never kills, pauses or renices anything. When it says no: read the reason, do CPU work, retry later (10 min or
  more), and report "blocked" with the reason if it stays closed. Model and tool caches are pointed at
@@ -59,18 +61,18 @@ def gpu_allowed(min_free_mb=16000, allow_shared=False):
         ok, apps = _smi(["--query-compute-apps=pid,process_name", "--format=csv,noheader"])
         if not ok:
             return False, apps
-        ours = {x.strip().lower() for x in os.environ.get("HIL_GPU_OURS", "").split(",") if x.strip()}
+        watch = {x.strip().lower() for x in os.environ.get("HIL_GPU_WATCH", "").split(",") if x.strip()}
         foreign = []
         for row in apps:
             parts = [p.strip() for p in row.split(",")]
-            name = os.path.basename(parts[1]).lower() if len(parts) >= 2 else ""
-            if not name or name not in ours:
+            name = os.path.basename(parts[1].replace("\\", "/")).lower() if len(parts) >= 2 else ""
+            if not name or name.startswith(("python", "kit", "isaac")) or name in watch:
                 foreign.append(row)
         if foreign:
             return False, "GPU busy with other compute processes: " + "; ".join(foreign[:4])
     if free < min_free_mb:
         return False, f"only {free} MB VRAM free, need {min_free_mb}"
-    return True, f"open: {free} MB free"
+    return True, f"{free} MB VRAM free"
 
 
 def require_gpu(min_free_mb=16000, allow_shared=False):
@@ -83,7 +85,7 @@ def require_gpu(min_free_mb=16000, allow_shared=False):
     for var, sub in (("HF_HOME", "hf"), ("TORCH_HOME", "torch"), ("XDG_CACHE_HOME", "xdg"), ("WARP_CACHE_PATH", "warp")):
         os.environ.setdefault(var, os.path.join(cache, sub))
         os.makedirs(os.environ[var], exist_ok=True)
-    print(f"[gpu-gate] {why}")
+    print(f"[gpu-gate] open: {why}")
 
 
 def main():
