@@ -1,12 +1,13 @@
 ---
 name: hardware-in-the-loop
-description: Sets up and runs the agent-driven hardware-in-the-loop engineering method for a hardware project - generator-first KiCad boards with Freerouting and live part verification, parametric CadQuery CAD with plug-in parts and mass/CG tables, host-tested firmware against a digital twin, a PowerShell CI matrix with no-shortcut and portability audits, dev/main branching with merge locks, machine-safety slots, detached jobs, usage-limit handoffs and overnight sessions, in either single-session or swarm mode. Use when the user says "hardware in the loop", "set up a hardware project", "PCB/CAD/firmware swarm", asks to scaffold a hardware repo for agents, or wants agents to design boards, enclosures or firmware with gates.
+description: Sets up and runs the agent-driven hardware-in-the-loop engineering method for a hardware project - generator-first KiCad boards with Freerouting and live part verification, parametric CadQuery CAD with plug-in parts and mass/CG tables, C firmware host-tested against a native C/C++ digital twin (models for rigid bodies, brushed and brushless motors, joints, thermal, batteries, sensors; scenarios over seeds; a C ABI) hosted in Unreal Engine 5.8.4+ or Isaac Sim, CUDA Monte Carlo sweeps, verified research citations, DECISIONS / QUESTIONS records, a PowerShell CI matrix with no-shortcut and portability audits, dev/main branching with merge locks, machine-safety slots, detached jobs, usage-limit handoffs and overnight sessions, in either single-session or swarm mode. Use when the user says "hardware in the loop", "digital twin", "firmware in the loop", "set up a hardware project", "PCB/CAD/firmware swarm", mentions simulating firmware in Unreal or Isaac Sim, asks to scaffold a hardware repo for agents, or wants agents to design boards, enclosures, firmware or a twin with gates.
 ---
 
 # Hardware in the loop
 
 You are setting up (or running) a hardware project where agents do the engineering and gates prove it. Read this
-whole file before acting. The method is described in the repository's `docs/` (METHOD, PCB, CAD, FIRMWARE, SIM, SWARM,
+whole file before acting. This is a starting point the project grows into its own harness, not a finished
+product: adapt every template to the project, and say so to the owner when something here does not fit. The method is described in the repository's `docs/` (METHOD, PCB, CAD, FIRMWARE, SIM, SWARM,
 TOOLS, LESSONS); this file is the procedure.
 
 ## 0. Say the cost first
@@ -31,10 +32,24 @@ supply and worst transient, board class and coating, simulation tiers (native tw
 machine limits (CPU cap default 90 %, RAM kept free for the system default 4 GB, free-disk floor default 50 GB),
 archive location, usage tripwire (default 95 %), standing decisions.
 
-Materials, fastening, enclosure sealing and clearance are PROJECT DECISIONS: never pick them silently; ask, recommend,
-record.
+Then batch 6 (the build spec: environment, temperature range, IP rating and cooling, standards such as IPC class or
+MIL-STD-810H / 461G, wire such as SAE AS22759 "Tefzel", EMC, vibration, derating headroom) and batch 7 (how the
+owner likes to work: long sims detached in the background at below-normal priority or only overnight, engines only
+when they say, how results reach them, what happens to questions while they are away). Also ask:
+
+- the firmware language, recommending C (say why: the same core compiles for the board and the twin; Python stays
+  for tools, CAD and the Isaac harness);
+- the twin tiers, recommending native twin + Unreal 5.8.4+ when there is a GPU (Isaac Sim when the team knows it);
+- the storage layout, recommending the repo on an NVMe / SSD and `.archive` linked to the biggest disk;
+- whether the team already describes boards in a board-as-code tool (SKiDL, atopile, circuit-synth). If it does,
+  keep that tool for the netlist and put this method's gates after it (KiCad ERC / DRC, live part checks, the fab
+  set); if not, use the Python generator pipeline of the skeleton. Do not argue tools: the gates are the point.
+
+Materials, fastening, enclosure sealing, clearance and the build spec are PROJECT DECISIONS: never pick them
+silently; ask, recommend, record.
 
 Write the answers to `answers.json` in the target repository's `.tmp/` (schema in `references/interview.md`).
+Every answer and every default taken becomes a numbered row of `DECISIONS.md` (the scaffold writes the first ones).
 
 ## 2. Generate the skeleton
 
@@ -53,7 +68,12 @@ slot / detach / watch / merge lock / merge-to-dev / promote / WIP backup / hando
 compare kept files by hand and merge what is useful. `--with-examples` adds the example board (a 2-layer 3.3 V LDO
 breakout that runs every pipeline step) and the example enclosure builder with two plug-ins.
 
-Then fill the decision table in `pcb/DESIGN_STANDARDS.md` section 0 from the answers.
+It also writes the digital twin (`sim/twin/`: models, plant, C ABI, runner, scenarios, CUDA sweep, tools), the
+firmware core (`firmware/core/`), `sim/unreal/` when the tiers name Unreal, `sim/isaac/` when they name Isaac,
+`DECISIONS.md`, `QUESTIONS.md`, `CITATION.md`, `tools/check_citations.py` and `tools/archive_tmp.py`.
+
+Then fill the decision table in `pcb/DESIGN_STANDARDS.md` section 0 from the answers, and make the archive link
+(`mklink /J .archive "<archive path>"` on Windows, `ln -s <archive path> .archive` elsewhere; ask first).
 
 ## 3. Tools
 
@@ -66,6 +86,10 @@ KiCad 10 (winget), Java 21 (winget), Freerouting 2.1.0 (pinned SHA-256), OSS CAD
 only for FPGA projects), a CadQuery venv. It writes `<ToolsRoot>/hil_tools.env` with `HIL_FREEROUTING_JAR`,
 `HIL_JAVA`, `HIL_KICAD_CLI`, `HIL_CQ_PYTHON`. Ask before installing anything machine-wide; run `-VerifyOnly` first and
 show the user what is missing. Nothing goes into the user profile.
+
+For the twin tiers: `pwsh -File <skill>/scripts/check_twin_tools.ps1` finds (never installs) CMake, a compiler,
+Ninja, Python, Unreal Engine >= 5.8.4, an Isaac Sim Python, the NVIDIA driver and nvcc, with the install hint for
+each missing one. Installing Unreal, Visual Studio, Isaac Sim or CUDA is machine-wide: show the report and ask.
 
 ## 4. Git: main and dev
 
@@ -83,6 +107,7 @@ Then run the first CI pass and keep its report as the main reference:
 
 ```
 pwsh -File windows/ci.ps1 -Only audit
+pwsh -File windows/ci.ps1 -Only twin          # the native twin: build, host suites, scenarios, determinism, ABI
 ```
 
 ## 5. Arm the harness
@@ -124,6 +149,32 @@ Follow `docs/SWARM.md` and `references/wave-checklist.md`:
 
 Keep lanes few and briefs exact; every wake-up of a big-context agent costs real money.
 
+## 7b. The digital twin (both modes)
+
+Follow `references/twin-setup.md`. In short:
+
+1. Run the example twin as shipped; `ci.ps1 -Only twin` GREEN proves the toolchain.
+2. Move the product's control code into `firmware/core` (C, HAL only; `references/firmware-host.md` for ESP32,
+   ESP32-P4, STM32, RP2040, nRF, Arduino), grow its host suites.
+3. Research each physical effect the scenarios need (`references/research-citations.md`): datasheet, standard,
+   textbook, paper; open and verify every source; a `CITATION.md` row and a `[REF-nnn]` tag per model.
+4. Replace the example plant with the product's, reusing the models; mass properties from the CAD through
+   `sim/twin/tools/cad_to_twin.py`, never typed.
+5. Scenarios for the task, every fault the firmware must survive and the build-spec corners, limits from
+   `REQUIREMENTS.md` / `DECISIONS.md`; rows in `MATRIX.txt`; seeds in CI, 40 seeds at night.
+6. Host it: Unreal (recommended; kinematic replay is hash-identical to the native runner, Chaos torque coupling for
+   contact) or Isaac Sim (behind `sim/isaac/gpu_gate.py`). Engines start only when the owner agreed or overnight.
+7. Margins: Monte Carlo over per-unit tolerances (`sim/twin/gpu/`, CPU reference, CUDA optional).
+8. Bench: every constant that matters gets a BENCH row and a bench-versus-twin comparison when hardware exists.
+
+## 7c. Records the agents keep
+
+- `DECISIONS.md`: read first; never re-ask a decision; a change is a new row that supersedes an old one.
+- `QUESTIONS.md`: every question for the owner, with options, the recommended default first, what it blocks and
+  when the default will be taken; closed questions become decisions.
+- `CITATION.md`: every model, constant and algorithm with a verified source (`ci.ps1 -Only citations`).
+- `.archive/`: results leave `.tmp/` only through `tools/archive_tmp.py` (hash-checked, with a manifest).
+
 ## 8. Discipline (both modes)
 
 - PCB: generator-first (`docs/PCB.md`). ERC 0/0, DRC 0 violations / 0 unconnected / 0 parity at default severities,
@@ -131,11 +182,13 @@ Keep lanes few and briefs exact; every wake-up of a big-context agent costs real
   when the auto-placer fails. More layers are allowed; report the price delta. Relaxing a rule needs a cited basis.
 - CAD: builders + plug-ins; a mass / station / CG table (`cad/mass_cg_table.py`) with every part change; fit and clash
   PNGs (`cad/render.py`) in `docs/cad_decisions/<date>/<topic>/`.
-- Firmware: out-of-tree builds, host suites with `hil_check.h`, scenarios through the real interface, seed sweeps,
-  determinism; hardware-pending listed.
+- Firmware: C (no interpreter in shipped firmware), out-of-tree builds, host suites with `hil_check.h`, scenarios
+  through the real interface, seed sweeps, determinism; hardware-pending listed.
+- Twin: every model cited and tested against a closed form; no Python physics; the same seed gives the same trace.
 - No unfinished work shown as finished; bench-only constants get `BENCH B-xx-nn` ids.
-- Machine: slots, below-normal priority, timeouts, never kill what you did not start, never `find` from a root, check
-  disk first, one Unreal / GPU job at a time, no Unreal launch while the owner is at the machine.
+- Machine: slots, below-normal priority, timeouts, never kill what you did not start, never `find` or recurse from a
+  drive root (search only named project or tool folders), check disk first, one Unreal / GPU job at a time, GPU only
+  through the gate with `HIL_GPU=1` for that job, no engine launch while the owner is at the machine unless agreed.
 
 ## 9. Handoff and overnight
 
