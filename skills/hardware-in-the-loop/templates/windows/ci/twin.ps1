@@ -220,8 +220,15 @@ if (Test-CiSelected 'twin_abi' $group $Only $Skip) {
     }
     $run = Invoke-CiCommand -Exe $py -Arguments $pyArgs -Cwd $runs -Log $log -TimeoutMin $TimeoutMin
     $m = Find-CiMatch $run.lines '^\[hil\] twin_ctypes: (\d+)/(\d+) checks passed, (\d+) failed'
-    Complete-CiResult -Result $r -Run $run -Passed $(if ($m) { [int]$m.Groups[1].Value } else { $null }) `
-      -Total $(if ($m) { [int]$m.Groups[2].Value } else { $null }) -SummaryFound ([bool]$m) -Summary $(if ($m) { $m.Value } else { 'no summary line' })
+    # ---- the CAD -> twin converter's closed-form self-test rides in the same suite
+    $c2t = Join-Path $twin 'tools\cad_to_twin.py'
+    $run2 = Invoke-CiCommand -Exe $py -Arguments @('-I', $c2t, '--self-test') -Cwd $runs -Log $log -TimeoutMin $TimeoutMin
+    $m2 = Find-CiMatch $run2.lines '^\[hil\] cad_to_twin: (\d+)/(\d+) checks passed, (\d+) failed'
+    $agg = [pscustomobject]@{ exit = $(if ($run.exit -ne 0) { $run.exit } else { $run2.exit }); duration_s = $run.duration_s + $run2.duration_s; lines = @(); command = $run.command }
+    $ok = [bool]$m -and [bool]$m2
+    Complete-CiResult -Result $r -Run $agg -Passed $(if ($ok) { [int]$m.Groups[1].Value + [int]$m2.Groups[1].Value } else { $null }) `
+      -Total $(if ($ok) { [int]$m.Groups[2].Value + [int]$m2.Groups[2].Value } else { $null }) -SummaryFound $ok `
+      -Summary $(if ($ok) { "$($m.Value) | $($m2.Value)" } else { 'no summary line (twin_ctypes or cad_to_twin)' })
   }
   $results += $r
 }

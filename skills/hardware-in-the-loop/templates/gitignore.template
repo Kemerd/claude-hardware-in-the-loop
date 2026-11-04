@@ -2,6 +2,8 @@
 #  Scratch, archive link and live coordination: never tracked (PROJECT_STRUCTURE.md section 1)
 # ---------------------------------------------------------------------------------------------------------------------
 .tmp/
+.archive
+.archive/
 archive/
 harness/
 .claude/worktrees/
@@ -39,6 +41,10 @@ Intermediate/
 Saved/
 Binaries/
 *.usdc.tmp
+# the host project reaches the plugin through a junction made by sim/unreal/link_plugin.ps1
+sim/unreal/host/Plugins/
+# nvcc intermediates (the embedded thermal_sweep_ptx.inc IS tracked)
+*.ptx
 
 # ---------------------------------------------------------------------------------------------------------------------
 #  Media: videos live in the archive, never in git (small stills for decisions are fine)

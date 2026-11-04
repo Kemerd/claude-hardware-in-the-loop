@@ -21,6 +21,14 @@ be true for this project to be done". Every lane works against it; the lead reco
 | PCB fab and assembly | {{FAB_VENDOR}} |
 | MCU family | {{MCU_FAMILY}} |
 | Simulation tiers | {{SIM_TIERS}} |
+| Languages | {{FIRMWARE_LANGUAGE}} |
+
+## 1b. Build spec (environment, standards, headroom)
+
+{{BUILD_SPEC}}
+
+Each line is a decision in `DECISIONS.md`; the derating table of `pcb/DESIGN_STANDARDS.md`, the thermal limits
+of the twin's scenarios and the enclosure rules all derive from it.
 
 ## 2. Hard rules (binding for every lane)
 
@@ -32,6 +40,9 @@ be true for this project to be done". Every lane works against it; the lead reco
   line; two contacts per power and ground net on every connector; TVS on connector pins; components derated
   (`pcb/DESIGN_STANDARDS.md`).
 - Every number in a report comes with the command, commit and date that produced it.
+- Every model, constant and algorithm cites a verified source (`CITATION.md`, `[REF-nnn]` in the code).
+- Firmware is C (or C++ where an SDK needs it), never an interpreter on the target: the same sources compile for
+  the board and for the twin.
 
 ## 3. Acceptance checklist
 

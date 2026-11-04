@@ -12,7 +12,7 @@
     pwsh -File windows\ci.ps1 -Compare <old ci_report.json> -FailOn regressions    # the merge / promotion gate
 
   GROUPS -> SUITES (the $groups registry below is the single source; add a group = add a row + a runner script)
-    audit   windows\ci\audit.ps1   audit_placeholders portability
+    audit   windows\ci\audit.ps1   audit_placeholders portability citations
     pcb     windows\ci\pcb.ps1     pcb_erc pcb_drc                     (every pcb\<board>\kicad\<board>.kicad_pro)
     twin    windows\ci	win.ps1    twin_build twin_tests twin_scenarios twin_determinism twin_abi  (sim	win)
 
@@ -87,7 +87,7 @@ Initialize-CiEnvironment $Out
 #  Group registry: group -> runner script, suites, late (start after the others), default (part of a plain run)
 # ---------------------------------------------------------------------------------------------------------------------
 $groups = [ordered]@{
-  audit = @{ script = 'audit.ps1'; suites = @('audit_placeholders', 'portability'); late = $false; default = $true }
+  audit = @{ script = 'audit.ps1'; suites = @('audit_placeholders', 'portability', 'citations'); late = $false; default = $true }
   pcb   = @{ script = 'pcb.ps1';   suites = @('pcb_erc', 'pcb_drc');                late = $false; default = $true }
   twin  = @{ script = 'twin.ps1';  suites = @('twin_build', 'twin_tests', 'twin_scenarios', 'twin_determinism', 'twin_abi'); late = $false; default = $true }
 }

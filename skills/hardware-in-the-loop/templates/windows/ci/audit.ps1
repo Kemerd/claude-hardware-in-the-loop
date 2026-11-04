@@ -10,6 +10,7 @@
                         (against tools\audit_baseline.json, or -AuditBaseline when ci.ps1 -Compare hands one over).
                         Fails on a NEW unwaived high / medium finding. extra.new_gate carries the count for -Compare.
     portability         python -I tools\check_portability.py --fail-on-any (rules R1-R4; every script, every console)
+    citations           python -I tools\check_citations.py: every [REF-nnn] tag in code has a verified CITATION.md row
 =======================================================================================================================
 #>
 param(
@@ -78,6 +79,28 @@ if (Test-CiSelected 'portability' $group $Only $Skip) {
     $m = Find-CiMatch $run.lines '^\[portability\] (\d+)/(\d+) scripts portable'
     Complete-CiResult -Result $r -Run $run -Passed $(if ($m) { [int]$m.Groups[1].Value } else { $null }) `
       -Total $(if ($m) { [int]$m.Groups[2].Value } else { $null }) -SummaryFound ([bool]$m) `
+      -Summary $(if ($m) { $m.Value } else { 'no summary line' })
+  }
+  $results += $r
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+#  citations
+# ---------------------------------------------------------------------------------------------------------------------
+if (Test-CiSelected 'citations' $group $Only $Skip) {
+  $log = Join-Path $Out 'logs\citations.log'
+  $r = New-CiResult 'citations' $group $log
+  $tool = Join-Path $Repo 'tools\check_citations.py'
+  if (-not $py) { $r.summary = 'python not found (set HIL_PYTHON)' }
+  elseif (-not (Test-Path $tool)) { $r.summary = "missing $tool" }
+  else {
+    $run = Invoke-CiCommand -Exe $py -Arguments @('-I', $tool, '--root', $Repo, '--json', (Join-Path $Out 'citations.json')) `
+      -Cwd $Repo -Log $log -TimeoutMin $TimeoutMin
+    # summary: "[citations] N tags in F files, R rows, missing M, unverified U, malformed X, unused K"
+    $m = Find-CiMatch $run.lines '^\[citations\] (\d+) tags in \d+ files, (\d+) rows, missing (\d+), unverified (\d+), malformed (\d+)'
+    $bad = if ($m) { [int]$m.Groups[3].Value + [int]$m.Groups[4].Value + [int]$m.Groups[5].Value } else { $null }
+    Complete-CiResult -Result $r -Run $run -Passed $(if ($m) { [int]$m.Groups[1].Value - [Math]::Min($bad, [int]$m.Groups[1].Value) } else { $null }) `
+      -Total $(if ($m) { [int]$m.Groups[1].Value } else { $null }) -Failed $bad -SummaryFound ([bool]$m) `
       -Summary $(if ($m) { $m.Value } else { 'no summary line' })
   }
   $results += $r

@@ -2,7 +2,8 @@
 
 This page says where every kind of file belongs, so the root stays clean and no result is ever lost.
 `README.md` is the human entry point, `README_AGENT.md` the agent entry point, `REQUIREMENTS.md` the definition of
-done, `CODING_RULES.md` the coding rules.
+done, `CODING_RULES.md` the coding rules, `DECISIONS.md` every owner decision (numbered, never edited),
+`QUESTIONS.md` the open questions to the owner, `CITATION.md` the verified source of every model and constant.
 
 ## 1. The three storage tiers
 
@@ -10,25 +11,39 @@ done, `CODING_RULES.md` the coding rules.
 |---|---|---|---|---|
 | Repository | the trees below | yes | source, generators and their exported JSON / STL / STEP, PCB projects and fab sets, docs, small results (`docs/data/<topic>/<date>/`, each file <= 50 MB, no blob > 100 MB) | forever (git history) |
 | Scratch | `.tmp/` in the main checkout and in every worktree | no | build trees, CI output, render frames, sim run folders, routing work folders, logs: anything a job produces while it runs | until the result is archived; then cheap-to-remake intermediates are deleted BY NAME, never with a sweeping remove |
-| Archive | `{{ARCHIVE_PATH}}` (linked as `archive/` in the main checkout, ignored) | no | everything expensive that is not in git: videos (never deleted), sim run outputs, renders, routing outputs, old scratch trees, data from removed worktrees (`worktrees/<name>/`) | forever |
+| Archive | `{{ARCHIVE_PATH}}`, reached as `.archive/` in the main checkout (a directory junction or symlink, ignored) | no | everything expensive that is not in git: videos (never deleted), sim and twin run outputs, renders, datasets, routing outputs, research PDFs (`research/`), old scratch trees, data from removed worktrees (`worktrees/<name>/`) | forever |
 
 Live coordination files are not scratch and never sit in `.tmp/`: they live in `harness/` (ignored, section 4).
+
+**Disks.** Keep the repository on an NVMe or SSD (builds, the twin, CAD and the engines are I/O bound) and put the
+archive on the biggest disk: a complex project fills hundreds of GB over a few weeks of traces, renders, videos and
+datasets. Link it once per checkout, never copy it:
+
+```
+mklink /J .archive "D:\archive\<project>"          # Windows (cmd; a junction needs no admin rights)
+ln -s /mnt/big/archive/<project> .archive         # Linux / macOS
+```
+
+Results leave `.tmp/` only through `python -I tools/archive_tmp.py <.tmp/folder> --topic <name>`: it copies, checks
+every SHA-256, writes a `MANIFEST.json` (source, sizes, hashes, commit, date) and only then removes the source.
+`python -I tools/archive_tmp.py --status` shows what `.tmp/` holds and the free space on both disks.
 
 ## 2. Repository trees
 
 | Tree | Contents |
 |---|---|
 | `firmware/` | one folder per microcontroller target; `host_tests/` builds and runs the control code on the PC |
-| `sim/` | `twin/` (native digital twin running the real firmware control code), `isaac/` (USD build, GPU-gated), `unreal/` (visual twin glue) |
+| `sim/` | `twin/` (the native C digital twin: models, plant, C ABI, runner, scenarios, CUDA sweep), `unreal/` (the HilTwin plugin and a host project), `isaac/` (USD authoring and the GPU-gated harness): every host runs the same `hil_twin_api` library |
+| `firmware/core/` | the portable control code (C11, no vendor headers, hardware only through `hal.h`): compiled for the target and, unchanged, into the twin |
 | `cad/` | CadQuery builders, one folder per assembly, each with `parts/` plug-ins and its exports (`<asm>_cad.json`, `parts.json`, `articulation.json`, `stl/`, `step/`) |
 | `pcb/` | one folder per board: its generator script, `kicad/` project, `fab/` set, results JSON; `tools/` (the shared pipeline); `DESIGN_STANDARDS.md` (the rule book) |
 | `docs/` | design notes, `bench/` (procedures + `BENCH_REGISTER.md`), `cad_decisions/<date>/<topic>/` (fit and clash PNGs with the decision note), `data/<topic>/<date>/` (tracked results), `datasheets/` |
-| `tools/` | repo-wide Python tooling: `audit_placeholders.py` (+ `audit_baseline.json`, `audit_waivers.json`), `check_portability.py` |
+| `tools/` | repo-wide Python tooling: `audit_placeholders.py` (+ `audit_baseline.json`, `audit_waivers.json`), `check_portability.py`, `check_citations.py`, `archive_tmp.py` |
 | `windows/` | PowerShell entry points: `ci.ps1` and `ci/*.ps1` (one runner per CI group) |
 | `interfaces/` | the contracts between parts: pin maps, wire list, protocol notes |
 
 Root files: `README.md`, `README_AGENT.md`, `PROJECT_STRUCTURE.md`, `REQUIREMENTS.md`, `CODING_RULES.md`,
-`.gitignore`, `.gitattributes`. Anything else at the root is a mistake to be filed into a tree above.
+`DECISIONS.md`, `QUESTIONS.md`, `CITATION.md`, `.gitignore`, `.gitattributes`. Anything else at the root is a mistake to be filed into a tree above.
 
 ## 3. Rules for results
 
@@ -53,4 +68,4 @@ Root files: `README.md`, `README_AGENT.md`, `PROJECT_STRUCTURE.md`, `REQUIREMENT
 
 Agent lanes work in `.claude/worktrees/<name>` on branches `swarm/<name>`. Before a worktree is removed, its
 uncommitted work is committed and pushed on its own branch and its ignored outputs are archived to
-`{{ARCHIVE_PATH}}/worktrees/<name>/`. Check free disk space before creating worktrees: each one is a full checkout.
+`.archive/worktrees/<name>/`. Check free disk space before creating worktrees: each one is a full checkout.

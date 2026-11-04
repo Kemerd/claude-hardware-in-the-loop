@@ -48,10 +48,28 @@ enforce the machine-checkable ones; reviewers (human or skeptic agent) enforce t
   repo's `.tmp/` or a tools folder outside the user profile.
 - `tools/check_portability.py` enforces this list.
 
+## 5b. Languages
+
+- **Firmware is C** (C11; C++17 only where a vendor SDK or a library demands it, without exceptions or RTTI on the
+  target). No MicroPython, CircuitPython or other interpreter in shipped firmware: the control core must compile
+  unchanged for the board and for the twin, run at a fixed rate with bounded memory, and be testable on the PC.
+- **The twin and the simulation hosts are C / C++** (C11 core, C++17 for engine glue). Unreal is C++.
+- **Python is for offline tooling** (CAD builders, converters, plots, scripts, CI helpers) and for the Isaac Sim
+  harness, which only moves data between PhysX and the C twin. No physics, sensor or control model is written in
+  Python; if one is needed it is written in C and called.
+- **CUDA** kernels share their body with a C reference (one header, compiled by both) and are checked against it.
+
+## 5c. Sources
+
+- Every model, equation, constant and algorithm names its source in a comment: `[REF-nnn]` for a row in
+  `CITATION.md` (verified by opening it, never from memory), a datasheet table, or a BENCH id.
+
 ## 6. Determinism
 
 - Generators (boards, CAD, sims) produce the same output from the same input: seeded randomness, sorted iteration,
   `PYTHONHASHSEED=0` where hash order leaks into output, stable UUIDs. Two runs, one file.
+- The twin: one random stream per noise source (`tw_rng`), no wall-clock time, no fast-math, no FMA contraction;
+  the same seed twice gives a byte-identical trace (CI suite `twin_determinism`).
 - Results that go into a report record the command, the commit and the date.
 
 ## 7. Performance and the machine

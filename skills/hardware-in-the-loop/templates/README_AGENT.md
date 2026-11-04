@@ -5,6 +5,10 @@ You are working on {{PROJECT_NAME}}: {{PROJECT_SUMMARY}}
 This page is the ten-minute orientation. The binding rules are in `harness/swarm/AGENT_RULES.md` (live, not tracked),
 `CODING_RULES.md` and the owner's instructions. When they disagree, the owner wins.
 
+Read in this order: this page, `DECISIONS.md` (what is settled, never re-ask it), `QUESTIONS.md` (what is open:
+do not decide those yourself), `REQUIREMENTS.md`, the plan's "Where I stopped" section, `CITATION.md` before you
+touch a model.
+
 ## 1. Where you work
 
 - The main checkout belongs to the owner. Never edit its working tree, never stash or autostash in it.
@@ -18,8 +22,9 @@ This page is the ten-minute orientation. The binding rules are in `harness/swarm
 ## 2. Where things live
 
 See `PROJECT_STRUCTURE.md`. In short: code and small tracked results in the repo trees; scratch in `.tmp/` (yours to
-fill, not to keep; delete by name only after the result is archived); expensive results in the archive
-(`{{ARCHIVE_PATH}}`); live coordination (plan, board log, locks, resume documents) in `harness/`.
+fill, not to keep: results leave it only through `tools/archive_tmp.py`); expensive results in the archive
+(`.archive/`, linked to `{{ARCHIVE_PATH}}` on the big disk); live coordination (plan, board log, locks, resume
+documents) in `harness/`.
 
 ## 3. How work is gated
 
@@ -34,6 +39,10 @@ fill, not to keep; delete by name only after the result is archived); expensive 
   `docs/cad_decisions/<date>/<topic>/`.
 - A constant only a bench can settle: a row in `docs/bench/BENCH_REGISTER.md`, cited in code as
   "design value, BENCH B-xx-nn".
+- The digital twin: `pwsh -File windows/ci.ps1 -Only twin` (build, host suites, the scenario matrix over seeds,
+  determinism, the C ABI from Python). A firmware change is not done until its scenarios pass in the twin.
+- A model or constant from a paper, a standard or a datasheet: a verified row in `CITATION.md` and `[REF-nnn]` in
+  the code (`tools/check_citations.py`, suite `citations`).
 
 ## 4. Machine safety
 
@@ -43,6 +52,8 @@ fill, not to keep; delete by name only after the result is archived); expensive 
   `bash harness/swarm/watch.sh <log>` as a background task so you are woken on success and on failure.
 - Never kill a process you did not start; kill your own only by exact PID. Never `find` over a drive root.
 - Check free disk space before big builds (keep at least {{DISK_FREE_MIN_GB}} GB free).
+- GPU work (Isaac Sim, CUDA sweeps, ML) only through `sim/isaac/gpu_gate.py` with `HIL_GPU=1` set for that one job;
+  one GPU job at a time; never start Unreal or Isaac while the owner works at the machine unless they said so.
 
 ## 5. When the session has to stop
 

@@ -16,6 +16,8 @@
         gitattributes.template             -> .gitattributes
         claude/settings.local.json.example -> .claude/settings.local.json
         pcb/example_board/ and cad/examples/ only with --with-examples
+        sim/unreal/ only when sim_tiers names Unreal, sim/isaac/ only when it names Isaac (the native twin
+        sim/twin/ and the firmware core are always copied: they are the first-class tier)
       an existing file is NEVER overwritten (it is listed as kept; compare by hand);
    3. fills the {{KEY}} template variables in Markdown files from the answers; any variable left unfilled is an
       error (exit 1) and the file is not written;
@@ -52,6 +54,8 @@ RENAMES = {
 }
 # copied only with --with-examples
 EXAMPLE_DIRS = ("pcb/example_board", "cad/examples")
+# copied only when answers["sim_tiers"] mentions the keyword (case-insensitive)
+TIER_DIRS = {"sim/unreal": "unreal", "sim/isaac": "isaac"}
 # never copied (caches a test run may have left in the template tree)
 SKIP_NAMES = {"__pycache__", ".tmp", ".pytest_cache"}
 SKIP_SUFFIX = (".pyc", ".kicad_prl")
@@ -78,6 +82,10 @@ SCHEMA = {
     "disk_free_min_gb": (True, "int"),
     "handoff_pct": (True, "int"),
     "decisions": (False, "list"),
+    "build_spec": (False, "list"),
+    "work_style": (False, "list"),
+    "firmware_language": (False, "text"),
+    "storage": (False, "text"),
 }
 RANGES = {"cpu_max_pct": (10, 100), "ram_reserve_gb": (1, 512), "disk_free_min_gb": (1, 100000), "handoff_pct": (50, 101)}
 VAR_RE = re.compile(r"\{\{([A-Z_]+)\}\}")
@@ -125,8 +133,14 @@ def load_answers(path):
 def variables(a, today):
     """The {{KEY}} values used in the Markdown templates."""
     bullets = lambda xs: "\n".join(f"- {x.strip()}" for x in xs)
-    decisions = a.get("decisions") or []
-    rows = "\n".join(f"| {i + 1} | {today} | {d.strip()} |" for i, d in enumerate(decisions))
+    decisions = list(a.get("decisions") or [])
+    decisions += [f"Build spec: {x.strip()}" for x in (a.get("build_spec") or [])]
+    decisions += [f"Working style: {x.strip()}" for x in (a.get("work_style") or [])]
+    if a.get("firmware_language"):
+        decisions.append(f"Firmware language: {a['firmware_language'].strip()}")
+    if a.get("storage"):
+        decisions.append(f"Storage: {a['storage'].strip()}")
+    rows = "\n".join(f"| D-{i + 1:03d} | {today} | {d.strip()} (source: interview) |" for i, d in enumerate(decisions))
     return {
         "PROJECT_NAME": a["project_name"].strip(),
         "PROJECT_SUMMARY": a["project_summary"].strip(),
@@ -146,7 +160,12 @@ def variables(a, today):
         "DISK_FREE_MIN_GB": str(a["disk_free_min_gb"]),
         "DATE": today,
         "MODE": a["mode"],
-        "DECISIONS": rows if rows else f"| 0 | {today} | (no standing decision yet; the lead appends them here) |",
+        "DECISIONS": rows if rows else f"| D-000 | {today} | (no standing decision yet; the lead appends them here) |",
+        "BUILD_SPEC": bullets(a["build_spec"]) if a.get("build_spec") else
+        "- not set yet: run interview batch 6 (build spec) before the first board or enclosure is designed",
+        "FIRMWARE_LANGUAGE": (a.get("firmware_language") or "").strip() or
+        "C11 for firmware (C++17 where a vendor SDK needs it), C / C++17 for the twin; Python only for offline tools,"
+        " CAD and the Isaac Sim harness",
     }
 
 
@@ -158,7 +177,7 @@ def fill(text, var, where):
     return VAR_RE.sub(lambda m: var[m.group(1)], text)
 
 
-def plan_files(with_examples):
+def plan_files(with_examples, tiers=""):
     """[(template path, destination relative path)] for every file to copy."""
     out = []
     for dirpath, dirnames, filenames in os.walk(TEMPLATES):
@@ -170,6 +189,8 @@ def plan_files(with_examples):
             if d in SKIP_NAMES:
                 continue
             if not with_examples and any(sub == e or sub.startswith(e + "/") for e in EXAMPLE_DIRS):
+                continue
+            if any((sub == t or sub.startswith(t + "/")) and k not in tiers.lower() for t, k in TIER_DIRS.items()):
                 continue
             keep.append(d)
         dirnames[:] = sorted(keep)
@@ -202,7 +223,7 @@ def main(argv=None):
     written, kept, errors = [], [], []
     # ---- 1. render everything first, so a template error writes nothing at all
     jobs = []
-    for src, rel in plan_files(args.with_examples):
+    for src, rel in plan_files(args.with_examples, a.get("sim_tiers", "")):
         target = os.path.join(dest, *rel.split("/"))
         if os.path.exists(target):
             kept.append(rel)
@@ -262,6 +283,8 @@ def main(argv=None):
         print(f"  = {rel} (exists, not overwritten)")
     print("[scaffold] next: git init -b main; git add -A; git commit; git branch dev; "
           "pwsh -File <skill>/scripts/setup_tools.ps1 -ToolsRoot <tools dir>; pwsh -File windows/ci.ps1 -Only audit")
+    print("[scaffold] archive: link .archive to the big disk (Windows: mklink /J .archive <D:\\archive\\project>, "
+          "Linux/macOS: ln -s <big disk>/<project> .archive); twin: pwsh -File windows/ci.ps1 -Only twin")
     return 0
 
 
