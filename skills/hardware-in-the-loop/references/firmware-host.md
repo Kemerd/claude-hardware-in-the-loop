@@ -76,7 +76,13 @@ ESP32 specifics worth knowing:
   pin plan against them before the board is drawn (a hosted register-level device model in the twin catches this
   too; see section 6).
 - `idf.py -B .tmp/build/<target>` keeps builds out of tree; `sdkconfig.defaults` is tracked, the generated
-  `sdkconfig` lives in the build folder (`docs/FIRMWARE.md` of the method).
+  `sdkconfig` lives in the build folder (`docs/FIRMWARE.md` of the method repository).
+- Use the shared core from the ESP-IDF project without moving it: a component whose `CMakeLists.txt` is
+  `idf_component_register(SRCS ../../core/src/ctrl.c ../../core/src/link.c INCLUDE_DIRS ../../core/include)` (paths
+  relative to `firmware/<target>/components/hil_core/`), so the twin and the board build the same files.
+- Count the peripherals before the pin plan: PCNT has 8 units on the classic ESP32 but 4 on the ESP32-S3 and the
+  ESP32-P4 (`SOC_PCNT_UNITS_PER_GROUP` in `soc_caps.h`); a 6-axis arm with quadrature encoders on an S3 needs
+  another plan (magnetic absolute encoders on SPI / I2C, or encoder counting on the motor drives).
 - ESP-IDF has a Linux host target for some components (`idf.py --preview set-target linux`); useful for unit tests
   of IDF-dependent code, but it does not model the peripherals: the HAL split is still the way to run in the twin.
 

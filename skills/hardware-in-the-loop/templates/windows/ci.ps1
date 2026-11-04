@@ -10,6 +10,7 @@
     pwsh -File windows\ci.ps1 -Skip pcb
     pwsh -File windows\ci.ps1 -Repo <worktree>                        # test another checkout (an agent's worktree)
     pwsh -File windows\ci.ps1 -Compare <old ci_report.json> -FailOn regressions    # the merge / promotion gate
+    pwsh -File windows\ci.ps1 -Only twin_scenarios -TwinSeeds 40                   # the nightly seed matrix
 
   GROUPS -> SUITES (the $groups registry below is the single source; add a group = add a row + a runner script)
     audit   windows\ci\audit.ps1   audit_placeholders portability citations
@@ -40,7 +41,8 @@ param(
   [string]$Compare = '',
   [ValidateSet('any', 'regressions')][string]$FailOn = 'any',
   [switch]$Strict,
-  [int]$TimeoutMin = 60
+  [int]$TimeoutMin = 60,
+  [int]$TwinSeeds = 0
 )
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -64,6 +66,8 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 Import-Module (Join-Path $PSScriptRoot 'ci\ci_common.psm1') -Force
+# ---- -TwinSeeds N: every twin_scenarios row runs seeds 1..N (the nightly 40-seed matrix); read by ci\twin.ps1
+if ($TwinSeeds -gt 0) { $env:HIL_TWIN_SEEDS = "$TwinSeeds" }
 
 # ---- "a,b" strings (from pwsh -File) become arrays; @() keeps empty lists as arrays
 function Split-List($v) { @($v | ForEach-Object { "$_" -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }

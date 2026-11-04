@@ -95,7 +95,7 @@ thermal limits and ambient range (the `hot_ambient` style scenarios run at the t
 | `enclosure` | text | 7 |
 | `fab_vendor` | text | 9 |
 | `mcu_family` | text | 10 |
-| `sim_tiers` | text | 13 |
+| `sim_tiers` | text; name `Unreal` and / or `Isaac` literally to get `sim/unreal` / `sim/isaac` (the scaffold matches those words and prints the tier folders it skipped) | 13 |
 | `gpu` (optional) | text | 14 |
 | `mode` | `"single"` or `"swarm"` | 17 |
 | `archive_path` | text | 16 |

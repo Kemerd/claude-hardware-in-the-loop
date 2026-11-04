@@ -10,8 +10,8 @@
  *     hil_twin_last_error() then holds a message for the calling thread;
  *   - handles are independent: two twins in one process share nothing (a seed sweep in threads is safe, one
  *     handle per thread);
- *   - additions are appended and bump HIL_TWIN_ABI_VERSION; a host checks the version and binds optional
- *     functions by name, so an old host keeps working with a new DLL.
+ *   - new exports are appended and keep HIL_TWIN_ABI_VERSION (hosts bind by name, so an old host keeps working
+ *     with a new DLL); changing an existing signature bumps it, and hosts refuse a mismatch.
  *
  * Units: SI, angles in rad, temperatures in degC.
  */

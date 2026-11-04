@@ -55,7 +55,15 @@ Add-Row 'native' 'python >= 3.9' $py (Version-Of $py) 'winget install Python.Pyt
 #  Unreal Engine (5.8.4 or newer)
 # ---------------------------------------------------------------------------------------------------------------------
 $ue = @()
-if ($env:HIL_UE_ROOT -and (Test-Path (Join-Path $env:HIL_UE_ROOT 'Engine\Build\BatchFiles\Build.bat'))) { $ue += [pscustomobject]@{ root = $env:HIL_UE_ROOT; ver = 'HIL_UE_ROOT' } }
+if ($env:HIL_UE_ROOT -and (Test-Path (Join-Path $env:HIL_UE_ROOT 'Engine\Build\BatchFiles\Build.bat'))) {
+  # ---- the engine's own version file, so a custom root is held to the same 5.8.4 floor
+  $bv = 'unknown'
+  try {
+    $j = Get-Content (Join-Path $env:HIL_UE_ROOT 'Engine\Build\Build.version') -Raw -Encoding utf8 | ConvertFrom-Json
+    $bv = "$($j.MajorVersion).$($j.MinorVersion).$($j.PatchVersion)"
+  } catch { }
+  $ue += [pscustomobject]@{ root = $env:HIL_UE_ROOT; ver = $bv }
+}
 $dat = Join-Path $env:ProgramData 'Epic\UnrealEngineLauncher\LauncherInstalled.dat'
 if (Test-Path $dat) {
   try {
@@ -70,7 +78,7 @@ if (Test-Path $dat) {
 $best = $null
 foreach ($u in $ue) {
   $m = [regex]::Match($u.ver, '^(\d+)\.(\d+)\.(\d+)')
-  $ok = $u.ver -eq 'HIL_UE_ROOT' -or ($m.Success -and ([version]"$($m.Groups[1].Value).$($m.Groups[2].Value).$($m.Groups[3].Value)" -ge [version]'5.8.4'))
+  $ok = ($m.Success -and ([version]"$($m.Groups[1].Value).$($m.Groups[2].Value).$($m.Groups[3].Value)" -ge [version]'5.8.4'))
   Add-Row 'unreal' 'Unreal Engine' $u.root $u.ver $(if ($ok) { '' } else { 'older than 5.8.4: install 5.8.4 or newer next to it' })
   if ($ok -and -not $best) { $best = $u }
 }

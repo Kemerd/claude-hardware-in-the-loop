@@ -2,7 +2,12 @@
 
 This is the procedure an agent follows to give a project a C / C++ digital twin that runs the REAL firmware control
 code, judged by scenarios over seeds, and hosted, when wanted, in Unreal Engine (recommended) or Isaac Sim. Read
-`docs/SIM.md` and `docs/TWIN.md` of the method for the why; this page is the how.
+`docs/SIM.md` of the method repository for the why (the docs/ folder is not copied by the scaffold; read it in
+the repository the skill came from); this page is the how.
+
+Shell note: Claude Code runs PowerShell or Git Bash, not cmd. Commands below are PowerShell; set environment
+variables with `$env:NAME = 'value'` (in PowerShell, `set NAME=value` does NOT set an environment variable) and run
+a quoted executable with `& "<path>" args`.
 
 ## 0. What the skeleton already gives you (all of it built and tested)
 
@@ -34,10 +39,16 @@ into the repository's `.tmp/` (CI does this; the GPU gate does it for GPU jobs).
 CMake 3.20+, a C11 / C++17 compiler (clang recommended on Windows: `winget install LLVM.LLVM`; MSVC and gcc work),
 Ninja (optional; Visual Studio ships one), Python 3.9+ for the tools. Build:
 ```
-cmake -S sim/twin -B .tmp/build/twin -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake -S sim/twin -B .tmp/build/twin -G Ninja -DCMAKE_BUILD_TYPE=Release `
+      -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_RC_COMPILER=llvm-rc   # what CI uses on Windows
 cmake --build .tmp/build/twin
 pwsh -File windows/ci.ps1 -Only twin          # the gate; must be GREEN before any other tier
 ```
+Linux / macOS: the same cmake lines with gcc or clang (drop the RC compiler); the binaries have no `.exe` and the
+library is `hil_twin_api.so` / `.dylib`. CI's `windows/ci.ps1` runs under pwsh on Linux too, but it is tested on
+Windows; on Linux run the cmake lines and the binaries directly if a path problem shows. Below, `<build>` means
+`.tmp/build/twin` (or its `Release/` subfolder with a multi-config generator such as Visual Studio); always take the
+DLL, `hil_twin` and the expected hashes from the SAME `<build>`.
 
 ### Unreal Engine 5.8.4 or newer (the recommended host)
 1. Install the **Epic Games Launcher**, sign in, *Unreal Engine > Library > Engine Versions > +*, pick **5.8.4 or
@@ -69,16 +80,23 @@ newer, plus MSVC on Windows) is needed only to regenerate the PTX after a kernel
 
 Work in numbered plan steps, each closed by `ci.ps1 -Only twin` (and the other groups it touches) going GREEN.
 
-1. **Run the example as it is.** `hil_twin sim/twin/params/example_rig.txt sim/twin/scenarios/reach.scn --seed 1
-   --out .tmp/twin`. Read the trace. This proves the toolchain before anything is changed.
-2. **Write the firmware core first, not the plant.** Move the product's control code into `firmware/core/` (or
-   `firmware/<target>/components/core/`): C11, no vendor headers, hardware only through `hal.h`, one
+1. **Run the example as it is.** `<build>/hil_twin.exe sim/twin/params/example_rig.txt sim/twin/scenarios/reach.scn
+   --seed 1 --out .tmp/twin` (`hil_twin` is not on PATH). Read the trace. This proves the toolchain before anything is changed.
+2. **Write the firmware core first, not the plant.** Move the product's control code into `firmware/core/` (keep it
+   there: the twin build reads `firmware/core` by default; if it must live elsewhere, configure the twin with
+   `-DHIL_CORE_DIR=<path>`, and add every new `firmware/core/src/*.c` to the `hil_core` library in
+   `sim/twin/CMakeLists.txt`): C11, no vendor headers, hardware only through `hal.h`, one
    `*_step()` at a fixed rate. Extend `hal_t` with the product's sensors and actuators (raw values only). Grow
    `firmware/host_tests` with it (`hil_check.h`). See `references/firmware-host.md` for ESP32 / ESP32-P4 / ARM.
 3. **Research before modelling.** For each physical effect the scenarios need, follow
    `references/research-citations.md`: datasheet first, then standard, textbook, paper; verify; add the
    `CITATION.md` row; tag the code `[REF-nnn]`.
-4. **Replace the plant.** Copy `src/plant.c` / `plant.h` to the product's plant. Reuse the models (`tw_motor`,
+4. **Replace the plant.** Edit `src/plant.c` / `plant.h` in place (they are listed in `HIL_PLANT_SOURCES` in
+   `sim/twin/CMakeLists.txt`; a renamed or added file goes there too), and keep the `tw_plant_create`,
+   `tw_plant_step`, `tw_plant_step_external` and `tw_plant_destroy` functions and the fields `twin_api.c` reads.
+   Keep `params/example_rig*.txt` and the example scenarios until `tests/test_twin_api.c` is pointed at the
+   product's params, or `twin_tests` fails. The FIRST row of `scenarios/MATRIX.txt` is the determinism and
+   host-parity row: put the product's nominal scenario there. Reuse the models (`tw_motor`,
    `tw_pmsm`, `tw_joint`, `tw_body`, `tw_thermal`, `tw_battery`, `tw_imu`, `tw_baro`, `tw_range`, `tw_adc`);
    write new models in the same style (a params struct, a state struct, `*_init` that validates, `*_step` that
    refuses non-finite input, a closed-form test in `tests/`). Keep the rules:
@@ -90,15 +108,29 @@ Work in numbered plan steps, each closed by `ci.ps1 -Only twin` (and the other g
    `inertia_kgmm2` for parts that matter), run `sim/twin/tools/cad_to_twin.py` into `sim/twin/out/*.txt`,
    `include =` it from the params file, and commit it with the CAD change that moved it. For a free body (a robot
    base, a drop test of the enclosure) feed the totals into `tw_body_params`.
-6. **More joints or bodies.** The ABI already passes arrays (`hil_twin_step_external(q[], qd[], tau[], n)`,
-   `hil_twin_joint_count`); grow the plant to N joints, keep index order fixed and documented, and bump
-   `HIL_TWIN_ABI_VERSION` only when a signature changes (adding exports does not need a bump: hosts bind by name).
+6. **More joints or bodies.** The ABI signatures already take arrays (`hil_twin_step_external(q[], qd[], tau[], n)`,
+   `hil_twin_joint_count`), but the example is wired for ONE joint. For N joints, in this order:
+   - firmware: give `hal_t`'s `encoder_read` / `motor_write` (and the ADC channels) a joint index, make
+     `hil_core_board_t` and the tunables per joint, run one cascade per joint in `hil_core_step`;
+   - params: prefix the keys per joint (`joint0.*`, `motor0.*`, `fw.joint0.*`), run `cad_to_twin.py` once per joint
+     (`--out sim/twin/out/joint<i>_mass.txt`, each with that joint's moving parts and axis);
+   - plant and ABI: arrays of joints and motors in `tw_plant`; in `twin_api.c` remove the `n_joints != 1` and
+     `i != 0` checks and return the real count from `hil_twin_joint_count`;
+   - dynamics: N independent `tw_joint`s are right only for joints that do not carry each other (separate
+     axes on a bench). A serial arm has coupled dynamics (mass matrix M(q), Coriolis, gravity of the links
+     beyond). Either write a `tw_chain` model (recursive Newton-Euler / composite rigid body after [REF-003], with
+     a closed-form two-link test) or let the host integrate the chain (Unreal ChaosTorque with one constraint per
+     joint, or Isaac PhysX as an articulation) and judge by scenario verdicts;
+   - hosts: one link component and one hinge per joint in `AHilTwinJointActor` (loop over
+     `hil_twin_joint_count`), the counts in `HilTwinTests.cpp`, one revolute joint per DOF in `rig_usd.py`;
+   - ABI version: adding exports keeps `HIL_TWIN_ABI_VERSION` (hosts bind by name); changing a signature bumps it.
 7. **Scenarios.** One file per behaviour that matters: the normal task, each fault the firmware must survive
    (sensor dead, sensor open / short, stall, low battery, link loss), the environment corners from the build spec
    (hot soak at the top of the temperature range, cold start), the overload the derating headroom is for. Each has
    acceptance lines with limits from `REQUIREMENTS.md` or `DECISIONS.md`, never invented. Commands go through the
-   link (as a station or app would send them); environment and faults through `set`. Add rows to `MATRIX.txt`.
-8. **Seeds.** CI runs each row over its seed count; the nightly chain runs 40. A result is the distribution, not
+   link (as a station or app would send them); environment and faults through `set`. Add rows to `MATRIX.txt`. The `stall` / fault scenarios with expected faults are as important as the passing ones.
+8. **Seeds.** CI runs each row over its seed count; the nightly chain runs
+   `pwsh -File windows/ci.ps1 -Only twin_scenarios -TwinSeeds 40` (overrides every row's count). A result is the distribution, not
    the best seed; a scenario that passes at seed 1 and fails at seed 7 has a real problem.
 9. **Determinism.** `twin_determinism` must stay green: no wall-clock time, no uninitialised memory, no iteration
    over hash containers, no fast-math, no FMA contraction. A different hash with the same seed is a bug, found
@@ -110,19 +142,22 @@ Work in numbered plan steps, each closed by `ci.ps1 -Only twin` (and the other g
 ## 3. Unreal: host the twin (recommended tier)
 
 1. `pwsh -File sim/unreal/link_plugin.ps1` (makes `sim/unreal/host/Plugins/HilTwin` a junction to the plugin).
-   Linux: `ln -s ../../HilTwin sim/unreal/host/Plugins/HilTwin`.
+   Linux: `mkdir -p sim/unreal/host/Plugins && ln -s ../../HilTwin sim/unreal/host/Plugins/HilTwin`, then build with
+   `<UE>/Engine/Build/BatchFiles/Linux/Build.sh HilTwinHostEditor Linux Development -Project=...`.
 2. Build (take the `ubt` slot first: `eval "$(bash harness/swarm/locks/slot.sh take ubt <you> "UE build" 8)"`):
    ```
-   "<UE>\Engine\Build\BatchFiles\Build.bat" HilTwinHostEditor Win64 Development -Project="<repo>\sim\unreal\host\HilTwinHost.uproject" -WaitMutex
+   & "<UE>\Engine\Build\BatchFiles\Build.bat" HilTwinHostEditor Win64 Development -Project="<repo>\sim\unreal\host\HilTwinHost.uproject" -WaitMutex
    ```
    It must end with `Result: Succeeded` and no warnings from `HilTwin`.
 3. Automation tests, headless and without a GPU (`-nullrhi`), take the `unreal` slot:
    ```
-   set HIL_TWIN_DLL=<repo>\.tmp\build\twin\hil_twin_api.dll
-   set HIL_TWIN_PARAMS=<repo>\sim\twin\params\example_rig.txt
-   set HIL_TWIN_SCENARIO=<repo>\sim\twin\scenarios\reach.scn
-   set HIL_TWIN_EXPECT_HASH=<the 16 hex digits from: hil_twin <params> <scenario> --seed 1 --no-trace>
-   "<UE>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "<repo>\sim\unreal\host\HilTwinHost.uproject" -ExecCmds="Automation RunTests HilTwin;Quit" -unattended -nullrhi -nosplash -abslog="<repo>\.tmp\ue\auto.log"
+   $env:HIL_TWIN_DLL = '<repo>\<build>\hil_twin_api.dll'
+   $env:HIL_TWIN_PARAMS = '<repo>\sim\twin\params\example_rig.txt'
+   $env:HIL_TWIN_SCENARIO = '<repo>\sim\twin\scenarios\reach.scn'
+   # the expected hash from the SAME build's runner:
+   $line = & '<repo>\<build>\hil_twin.exe' $env:HIL_TWIN_PARAMS $env:HIL_TWIN_SCENARIO --seed 1 --no-trace | Select-String 'fnv1a64='
+   $env:HIL_TWIN_EXPECT_HASH = ([regex]::Match("$line", 'fnv1a64=([0-9a-f]{16})')).Groups[1].Value
+   & "<UE>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "<repo>\sim\unreal\host\HilTwinHost.uproject" -ExecCmds="Automation RunTests HilTwin;Quit" -unattended -nullrhi -nosplash -abslog="<repo>\.tmp\ue\auto.log"
    ```
    Both `HilTwin.Abi` and `HilTwin.KinematicParity` must report `Result={Success}`: Unreal hosting the twin gives
    the native runner's trace hash bit for bit. Record the hash pair in the step's report.
@@ -142,7 +177,7 @@ Work in numbered plan steps, each closed by `ci.ps1 -Only twin` (and the other g
    by verdicts, not hashes.)
 6. Headless runs of a map (agents, CI-like batches, never while the owner works unless agreed):
    ```
-   UnrealEditor-Cmd.exe <host>.uproject /Game/<Map> -game -nullrhi -unattended -HilTwinScenario=<scn> -HilTwinSeed=3 -HilTwinQuitOnFinish -abslog=<repo>\.tmp\ue\run.log
+   & "<UE>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" <host>.uproject /Game/<Map> -game -nullrhi -unattended -HilTwinScenario=<scn> -HilTwinSeed=3 -HilTwinQuitOnFinish -abslog=<repo>\.tmp\ue\run.log
    ```
    The log line `[twin-ue] <scenario> seed <n> done t=... trace fnv1a64=...` closes the run; the trace lands in
    `Saved/HilTwin/`. Console commands for interactive sessions: `HilTwin.Arm 1`, `HilTwin.SetPos 0.5`,

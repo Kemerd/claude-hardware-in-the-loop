@@ -12,7 +12,8 @@
                       Generator: Ninja (HIL_NINJA, PATH, or the copy Visual Studio ships), else CMake's default.
     twin_tests        test_twin_models, test_hil_core, test_twin_api; each must print its "[hil] <suite>: P/T checks
                       passed, F failed" line (exit 0 without it is a failure).
-    twin_scenarios    every row of sim\twin\scenarios\MATRIX.txt over seeds 1..N; one "[twin] ... PASS|FAIL" line per run.
+    twin_scenarios    every row of sim\twin\scenarios\MATRIX.txt over seeds 1..N (N from the row, or HIL_TWIN_SEEDS /
+                      ci.ps1 -TwinSeeds for every row: the nightly 40); one "[twin] ... PASS|FAIL" line per run.
     twin_determinism  the first matrix row twice at seed 1: the two trace files must have the same SHA-256.
     twin_abi          python -I sim\twin\tests\test_twin_ctypes.py: the C ABI from another language (the way the Isaac
                       harness and notebooks load it) plus host parity: the first matrix row played from Python must
@@ -140,7 +141,9 @@ if (Test-Path $mf) {
     if (-not $l) { continue }
     $f = $l -split '\s+'
     if ($f.Count -ne 3) { continue }
-    $matrix += [pscustomobject]@{ params = (Join-Path $twin "params\$($f[0])"); scenario = (Join-Path $twin "scenarios\$($f[1])"); seeds = [int]$f[2] }
+    $n = [int]$f[2]
+    if ($env:HIL_TWIN_SEEDS -match '^\d+$' -and [int]$env:HIL_TWIN_SEEDS -gt 0) { $n = [int]$env:HIL_TWIN_SEEDS }
+    $matrix += [pscustomobject]@{ params = (Join-Path $twin "params\$($f[0])"); scenario = (Join-Path $twin "scenarios\$($f[1])"); seeds = $n }
   }
 }
 

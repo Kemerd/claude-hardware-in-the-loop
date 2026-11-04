@@ -277,6 +277,9 @@ def main(argv=None):
     # ---- 3. report
     tag = "would write" if args.dry_run else "wrote"
     print(f"[scaffold] {tag} {len(written)} files into {dest}; kept {len(kept)} existing")
+    skipped = [t for t, k in TIER_DIRS.items() if k not in a.get("sim_tiers", "").lower()]
+    if skipped:
+        print(f"[scaffold] tier folders not copied (sim_tiers does not name them): {', '.join(skipped)}")
     for rel in written:
         print(f"  + {rel}")
     for rel in kept:

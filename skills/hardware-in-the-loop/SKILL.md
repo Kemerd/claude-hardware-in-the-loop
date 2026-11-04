@@ -133,7 +133,7 @@ Follow `harness/swarm/PLAN.md` (from `references/single-session-plan.md`):
 
 ## 7. Working: swarm mode
 
-Follow `docs/SWARM.md` and `references/wave-checklist.md`:
+Follow `docs/SWARM.md` of the method repository (not copied by the scaffold) and `references/wave-checklist.md`:
 
 1. Wave 1, recon: read-only agents write verified facts with file:line anchors to `harness/swarm/recon_<area>.md`.
 2. Wave 2, plan: `PLAN.md` (`references/plan-template.md`) with lanes, one owner per file (cross-lane changes as patch
@@ -161,7 +161,8 @@ Follow `references/twin-setup.md`. In short:
 4. Replace the example plant with the product's, reusing the models; mass properties from the CAD through
    `sim/twin/tools/cad_to_twin.py`, never typed.
 5. Scenarios for the task, every fault the firmware must survive and the build-spec corners, limits from
-   `REQUIREMENTS.md` / `DECISIONS.md`; rows in `MATRIX.txt`; seeds in CI, 40 seeds at night.
+   `REQUIREMENTS.md` / `DECISIONS.md`; rows in `MATRIX.txt` (the first row is the determinism / parity row); seeds in CI, 40 at night
+   (`ci.ps1 -Only twin_scenarios -TwinSeeds 40`).
 6. Host it: Unreal (recommended; kinematic replay is hash-identical to the native runner, Chaos torque coupling for
    contact) or Isaac Sim (behind `sim/isaac/gpu_gate.py`). Engines start only when the owner agreed or overnight.
 7. Margins: Monte Carlo over per-unit tolerances (`sim/twin/gpu/`, CPU reference, CUDA optional).
