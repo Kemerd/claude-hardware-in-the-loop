@@ -97,6 +97,7 @@ First pass. Method and reasons: the skill's `docs/PCB.md`, "Stages" and "Board l
 - **STAGE-02:** one floorplan region per stage, in signal order where the board's shape allows; passives sit beside the pin they serve, inside their stage.
 - **STAGE-03:** each stage has a rectangle and a title on silk, on each face it uses. No fake stages: say in the table when a group is just how the circuit is.
 - **STAGE-04:** a first pass may be rough, but no board routes or lands before a reviewer who is not its author has checked every part against the stages.
+- **STAGE-05:** for each real stage, search published circuits before fixing the topology, compare two or three with citations, and note the choice. A published circuit is a starting point, not a limit.
 - **LOOK-01:** every part keeps its reference designator on silk, placed by `pcb/tools/place_labels.py`. Never moved off silk to pass a check.
 
 ## 10. Review checklist (manual items, every board)
