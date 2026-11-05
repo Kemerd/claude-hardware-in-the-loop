@@ -2,9 +2,9 @@
 
 > **Cost first.** A swarm day on the project this method comes from burned **4-5 million tokens**. Most of it was not
 > the work itself: it was waking lane agents that each carried 300-800k tokens of context, again and again, to read a
-> message, check a log or answer a question. After that day the owner switched the default to a **single session with
-> no subagents** that runs long jobs detached and resumes from a "Where I stopped" section. Use the swarm when wall-clock
-> time matters more than tokens and the work splits into lanes that rarely need each other.
+> message, check a log or answer a question. After that day the owner cancelled swarms, and the default became a **chain**:
+> one long lead session that hands one bounded card at a time to one subagent and waits for the report (section 6). Use
+> the swarm when wall-clock time matters more than tokens and the work splits into lanes that rarely need each other.
 
 ## 1. Roles and models
 
@@ -104,7 +104,35 @@ session, see "hook is live", remove the file.
 See `references/overnight-questions.md`: a detached night chain with one slot and a timeout per step, and a batched
 list of morning questions with context, options, the recommended default and what was assumed meanwhile.
 
-## 6. The single-session alternative (the default)
+## 6. The chain (the default)
+
+One long lead session, one subagent at a time. A subagent run in sequence is not a swarm, and it does save tokens: the
+file dumps, build logs and trial and error stay in its context, and the lead's context takes in only the report. On
+the source project two such cards used 509k and 678k tokens of their own, and each came back to the lead as a short
+summary. Run in the lead, all of that would have stayed in the context every later message pays for.
+
+| Role | Model | Does |
+|---|---|---|
+| Lead | Fable or Opus | owns the plan, the decisions and the owner; does small jobs itself; writes each brief; checks each report |
+| Subagent, hard card | Opus | one bounded card: CAD, routing, control, anything where a plausible wrong answer is expensive |
+| Subagent, mechanical card | Sonnet | one bounded card: ports, renders, tests, docs |
+
+Rules:
+
+1. **One subagent at a time.** The lead waits for the notification, or works on files the card does not touch. Machine
+   limits then stay simple too: at 100 % CPU a swarm's agents spent 30-40 minutes queueing for a slot.
+2. **A card is bounded.** One outcome, the files to read, acceptance numbers, what to leave alone, where the report goes.
+   If you cannot write the brief, you do not understand the task yet.
+3. **A fresh agent per card.** Never wake an old giant to ask it a small thing. That is what burned the swarm day.
+4. **The lead does a job itself when it is a handful of tool calls.** A card costs more than it looks: it knows only what
+   the brief says, and you see only the summary.
+5. **Check the report.** Read at least one number back from the files before the card counts as done. An agent's mistakes
+   arrive in the same confident tone as its findings.
+6. **Tell the owner what is running and why.** "What are those agents doing" should have a one-line answer.
+
+Plan template: `references/chain-plan.md`.
+
+## 6b. The single-session alternative
 
 One session, no subagents:
 

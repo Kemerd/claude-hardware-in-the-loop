@@ -123,8 +123,8 @@ def load_answers(path):
         v = a.get(key)
         if isinstance(v, int) and not isinstance(v, bool) and not (lo <= v <= hi):
             problems.append(f"{key}: {v} outside {lo}..{hi}")
-    if a.get("mode") not in ("swarm", "single"):
-        problems.append("mode: must be 'swarm' or 'single'")
+    if a.get("mode") not in ("chain", "single", "swarm"):
+        problems.append("mode: must be 'chain', 'single' or 'swarm'")
     if problems:
         fail("answers.json problems:\n  " + "\n  ".join(problems))
     return a
@@ -237,7 +237,7 @@ def main(argv=None):
         else:
             jobs.append((target, rel, None, src))
     # ---- the plan for the chosen mode and the machine limits
-    plan_src = os.path.join(REFERENCES, "plan-template.md" if a["mode"] == "swarm" else "single-session-plan.md")
+    plan_src = os.path.join(REFERENCES, {"swarm": "plan-template.md", "chain": "chain-plan.md"}.get(a["mode"], "single-session-plan.md"))
     plan_dst = os.path.join(dest, "harness", "swarm", "PLAN.md")
     if os.path.exists(plan_dst):
         kept.append("harness/swarm/PLAN.md")

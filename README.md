@@ -147,9 +147,10 @@ The whole method on one page: [docs/METHOD.md](docs/METHOD.md).
 
 > Running this method as a **swarm** (a lead agent plus parallel lane agents) is expensive. On the project it comes
 > from, **one swarm day burned 4-5 million tokens**, and most of that was not the work: it was waking lane agents that
-> each carried **300-800k tokens of context** to read a message or check a log. The default is now a **single session
-> with no subagents** that works step by step, runs long machine jobs detached, and resumes from a "Where I stopped"
-> section. The skill offers both modes and recommends the single session. Choose the swarm on purpose.
+> each carried **300-800k tokens of context** to read a message or check a log. The default is now a **chain**: one long
+> lead session (Fable or Opus) hands one bounded card at a time to one subagent (Opus or Sonnet) and waits for the report,
+> so logs and trial and error stay out of the lead's context. The skill also offers a single session with no subagents,
+> and the swarm. Choose the swarm on purpose.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/out/05-modes-dark.png">
@@ -199,7 +200,7 @@ docs/
   CAD.md         CadQuery builders, the plug-in contract, mass / CG tables, decision images, material decisions
   FIRMWARE.md    out-of-tree builds, host test suites, firmware in the loop against a native twin, bench rigs
   SIM.md         the C digital twin, its models and scenarios, the Unreal and Isaac Sim hosts, CUDA Monte Carlo
-  SWARM.md       lead / subagent models, waves, briefs, skeptics, integrator, locks, handoffs, single-session mode
+  SWARM.md       the chain (default), lead / subagent models, waves, briefs, skeptics, integrator, locks, handoffs, single-session mode
   TOOLS.md       what to install, pinned versions and hashes, where it lives, home-directory isolation
   LESSONS.md     40 lessons: one sentence of symptom, one of rule
 skills/hardware-in-the-loop/

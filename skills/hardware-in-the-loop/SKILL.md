@@ -15,11 +15,15 @@ TOOLS, LESSONS); this file is the procedure.
 Before anything else, tell the user, plainly:
 
 > Running this method with a swarm of agents is expensive. On the project it comes from, one swarm day burned 4-5
-> million tokens, mostly by waking lane agents that each carried 300-800k tokens of context. The cheaper mode is a single
-> session with no subagents that works step by step, runs long machine jobs detached, and resumes from a "Where I
-> stopped" section. Which mode do you want? (recommended: single session)
+> million tokens, mostly by waking lane agents that each carried 300-800k tokens of context. Three modes:
+> - **chain** (recommended): one long lead session (Fable or Opus) hands one bounded card at a time to one subagent
+>   (Opus or Sonnet), waits for the report, then goes on. The logs and trial and error stay out of the lead's context.
+> - **single**: one session, no subagents, cheapest on small projects.
+> - **swarm**: a lead plus parallel lanes, fastest wall-clock, by far the most expensive.
+> Which mode do you want? (recommended: chain)
 
-Record the answer as `mode` (`single` or `swarm`). Do not spawn any subagent before the user chose swarm mode.
+Record the answer as `mode` (`chain`, `single` or `swarm`). A subagent in sequence is not a swarm: in `chain` mode one
+at a time is the normal way to work. Do not run parallel lanes before the user chose swarm mode.
 
 ## 1. Onboarding interview
 
@@ -119,7 +123,20 @@ pwsh -File windows/ci.ps1 -Only twin          # the native twin: build, host sui
 - Check `bash harness/swarm/locks/slot.sh status`.
 - The lead session runs from the main checkout (that is where `harness/` lives); edits happen in worktrees.
 
-## 6. Working: single-session mode (default)
+## 6. Working: chain mode (default)
+
+Follow `harness/swarm/PLAN.md` (from `references/chain-plan.md`) and `docs/SWARM.md` section 6:
+
+1. The lead owns the plan, the decisions and the owner. It does small jobs itself, a handful of tool calls.
+2. A job that would fill the lead's context with logs and file dumps goes to ONE subagent as ONE bounded card: one
+   outcome, what to read, acceptance numbers, what to leave alone, a report file. Opus for subtle cards, Sonnet for
+   mechanical ones.
+3. The lead waits for the report, or works on something that touches other files meanwhile, but starts no second
+   subagent. It spot-checks a number from the report, then lands the card.
+4. A fresh agent per card. Never wake an old agent with a large context to ask it a small thing.
+5. Long machine jobs, questions and stopping work as in single-session mode below.
+
+## 6b. Working: single-session mode
 
 Follow `harness/swarm/PLAN.md` (from `references/single-session-plan.md`):
 
@@ -130,6 +147,9 @@ Follow `harness/swarm/PLAN.md` (from `references/single-session-plan.md`):
    background task; continue with the next step while it runs.
 5. Owner questions: batched, recommended default first; defaults taken are written into the plan.
 6. Stopping: append "## Where I stopped" (done with SHAs, running jobs with PIDs and logs, exact next step).
+
+When an auto-router or auto-placer gets stuck, in any mode, stop it and look: `docs/PCB.md`, "When the router gets
+stuck". Render the board with `pcb/tools/place_view.py`, read the picture, place by hand, then route again.
 
 ## 7. Working: swarm mode
 

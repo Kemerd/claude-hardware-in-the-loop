@@ -65,6 +65,33 @@ red run still says exactly why.
 - **The CPL uses KiCad's rotations.** Assembly houses define 0 degrees per package differently; check the assembly
   preview before paying and put any offset in the board script.
 
+## When the router gets stuck
+
+A router that is not converging will not fix itself by running longer. A longer run costs hours and teaches nothing,
+because a conflict count does not say why. Set a stop rule before you start, then look at the board.
+
+**Stop rule.** Stop a run when the best count has not improved for 10 passes, or when the count has climbed well past its
+best. Never let it run out a long time limit for the sake of finishing.
+
+**Then, in order:**
+
+1. Render it: `place_view.py dump <board> view.json`, then `place_view.py draw view.json view.png`. Both faces on a 5 mm
+   grid, coloured by kind, references on every part that matters. The tool is in `pcb/tools/`.
+2. Read the picture yourself. A model can see this. Look for connectors away from the edge, tall parts forming walls,
+   a chip with its decoupling pushed away, two blocks whose nets must cross.
+3. Name the cause. Write down what you saw, before you change anything.
+4. Place by hand. Put explicit coordinates in the generator for connectors and big parts, and let passives follow the pins
+   they serve. Connectors go on the edge nearest where their wires leave.
+5. Question the parts. A connector housing can be the biggest thing on the board. Wire-lap pads, a smaller package or a
+   part on the other face may do more than any router setting.
+6. Render again and look again before you route. Only then start the router, with the same stop rule.
+
+**From the source project.** A 426-part board, two processors, 8 layers. A negotiated router went from 500 conflicts to
+189 in nine passes, then climbed back to 521 by pass 26. A greedy placer had reported every part placed, and the numbers
+looked fine. One render showed why: big connectors sat in the middle of the board, walling off the routing and covering
+the spots where one chip's decoupling belonged, and the JST housings took a large share of the courtyard. The numbers had
+not shown any of that.
+
 ## 3. Freerouting setup and flags
 
 Freerouting 2.1.0 (GPL-3.0, a Java 21 application) is the router. The pipeline finds it through `HIL_FREEROUTING_JAR` and
@@ -136,7 +163,7 @@ never committed.
   PID) when the log stops growing, and the run reports it.
 - **Hand placement is expected.** When an auto-placer or the router does not converge after one cause-level fix, the agent
   places the critical parts by hand with explicit, reasoned coordinates in the generator, and hand-routes or
-  polygon-builds the critical nets; then the tools finish the rest.
+  polygon-builds the critical nets; then the tools finish the rest. See "When the router gets stuck" below.
 - **More layers are an allowed cause-level fix, but cost rises fast.** Try placement and floorplan fixes first; when adding
   layers, report the fab price delta (2 -> 4 -> 6 layers at the build quantity) so the owner sees the trade.
 - **Relaxing a rule needs a cited basis** (a DESIGN_STANDARDS row, an IPC table, the fab capability page); otherwise move
