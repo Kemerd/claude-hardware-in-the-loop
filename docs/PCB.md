@@ -125,9 +125,11 @@ A layout that only satisfies the netlist works and can't be read. Open it and th
 5. **Don't fake it.** Sometimes that is just how the circuit is: a decoupling field under a BGA, or a bus that touches everything. Those parts belong to the chip's stage or to no box at all. A box around a fiction is worse than no box. Say why in the table.
 6. **Re-route, and look for a smaller board.** Stages are a placement decision, so they mean a new route. Each board that goes through this reports whether its outline can shrink, and what that changes in CAD and mass.
 
+**This is a strong guideline, not a wall.** Follow it as far as you can, roughly nine times in ten. There will always be parts that don't fit, and small cases where it makes no sense. One add-on fix to a finished board does not mean redoing the whole board: put it where it works and note it in the table as an exception, with the reason. Boxes ideally don't overlap, and a slight overlap is fine when the board needs it.
+
 **Stage review, required on every board.** An agent may get a first pass down however it can, to learn what fits. That first pass does not get routed or landed until it has been reviewed against the stages: a separate reviewer, not the author, renders both faces and asks of every part: is it in a stage, could it move into one, and can a stray group become a real stage or go inside one? The reviewer returns a list of moves or says why a part can't move, the author applies them, and only then does the board route. A dump that was never reviewed is not a finished board.
 
-Gate, by hand until the tool ships: every part in exactly one stage, no part outside its box, no two boxes overlapping, every box titled. Render both faces and read them: if you can't say what a region does, the stage isn't done.
+Check, by hand until the tool ships, and it reports rather than blocks: every part in one stage or listed as an exception, parts inside their box, boxes clear of each other or only slightly overlapping, every box titled. Render both faces and read them: if you can't say what a region does, the stage isn't done.
 
 ## 3. Freerouting setup and flags
 

@@ -91,7 +91,7 @@ Until a row is decided, the rule that depends on it is reported as "undecided" b
 
 ## 9. Board layout and look (STAGE, LOOK)
 
-First pass. Method and reasons: the skill's `docs/PCB.md`, "Stages" and "Board look".
+First pass. Method and reasons: the skill's `docs/PCB.md`, "Stages" and "Board look". The STAGE items are a strong guideline, not a wall: follow them as far as you can, and note an exception with its reason. A small add-on fix does not mean redoing the board. Boxes ideally don't overlap; a slight overlap is fine.
 
 - **STAGE-01:** every part belongs to one named stage in `pcb/<board>/stages.json`, with its job, inputs and outputs.
 - **STAGE-02:** one floorplan region per stage, in signal order where the board's shape allows; passives sit beside the pin they serve, inside their stage.
