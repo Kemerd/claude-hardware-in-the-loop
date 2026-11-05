@@ -151,6 +151,8 @@ Follow `harness/swarm/PLAN.md` (from `references/single-session-plan.md`):
 When an auto-router or auto-placer gets stuck, in any mode, stop it and look: `docs/PCB.md`, "When the router gets
 stuck". Render the board with `pcb/tools/place_view.py`, read the picture, place by hand, then route again.
 
+Lay a board out as named stages, not as whatever fits: a stage table before placement, one region per stage, parts beside the pins they serve, a box and title on silk for each stage. A subagent may get a rough first pass down, but no board routes or lands until a reviewer who is not its author has checked every part against the stages. `docs/PCB.md`, "Stages". A board that passes every check and can't be read isn't finished.
+
 ## 7. Working: swarm mode
 
 Follow `docs/SWARM.md` of the method repository (not copied by the scaffold) and `references/wave-checklist.md`:
