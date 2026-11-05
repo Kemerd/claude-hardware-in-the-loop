@@ -232,8 +232,26 @@ From a board script: `Board(..., router="negotiated", router_config={...})`. The
 - Custom rules in a `.kicad_dru` are not read. The closing DRC does check them, so they show up as errors, not as silence.
 - Tracks run at 0 / 45 / 90 degrees on a grid, 0.05 mm by default. Rasters cost one set per width class per layer: a big board with fine rules can run out of memory, and the run refuses before it starts (`grid`, `max_ram_gb`).
 - Existing copper never moves. A half-routed board can be walled in.
-- A pour cut up by tracks can leave isolated islands, a DRC warning the pipeline's gate treats as a stop. Set the zone to remove islands, or keep tracks off that layer.
+- A pour cut up by tracks can leave isolated islands, a DRC warning the pipeline's gate treats as a stop. Set the zone to remove islands, or lower `plane_cover` so the pour counts as a plane and tracks stay off it.
 - Planes are not protected from vias. A row of vias can slot a plane, and nothing here looks at return paths.
+
+**Test run, 2026-11-05.** Real boards with every track and via stripped first, KiCad 10.0.6, one core. Counts are from `kicad-cli pcb drc --refill-zones` on the result. The only warnings beyond `isolated_copper` were library checks, because the board copies had no footprint libraries beside them.
+
+| Board | Layers, pads | Config | Tracks, vias | Time | Open nets | DRC errors |
+|---|---|---|---|---|---|---|
+| camera head with a CSP, 15 x 12 mm | 4, 205 | `via_in_pad` on the CSP | 873, 86 | 3.7 s | 0 | 0 |
+| sensor daughter board, 16 x 19 mm | 4, 85 | none | 527, 38 | 2.2 s | 0 | 0, 3 `isolated_copper` warnings |
+| same, `plane_cover` 0.2: its 25 % pour becomes a second plane | 4, 85 | one key | 586, 41 | 3.5 s | 0 | 0, no such warning |
+| round carrier, 36 mm, two planes, keep-outs | 4, 43 | none | 154, 25 | 1.9 s | 0 | 0 |
+| sensor carrier, 36 x 22 mm | 2, 62 | none | 342, 22 | 1.5 s | 0 | 0 |
+| encoder board, 14 x 14 mm | 2, 30 | none | 132, 13 | 0.8 s | 0 | 0 |
+| small sensor board, 11 x 17 mm | 2, 14 | none | 139, 6 | 0.8 s | 0 | 0 |
+| camera board, 32 x 32 mm, planes added by hand, 124 keep-outs | 6, 397 | `via_in_pad`, `via` 0.30 / 0.15 | 966, 132 | 58 s | 9, reported | 0 |
+| motor driver, 40 x 40 mm, planes added by hand, stopped at a 12 minute limit | 6, 482 | none | 4184, 274 | 12.5 min | 10, reported | 0 |
+
+Both 6-layer boards stayed open: no shorts, and every open net named. Those are the boards to look at first with `place_view.py`.
+
+Without `via_in_pad` the CSP board ends with two inner balls open and says which. Tested on Windows (clang 20, the MinGW 32-bit gcc refused with its reason) and on Linux (gcc 13, `test_pf_route.py` only). macOS has its build flags but has not been run.
 
 ## 4. Determinism
 
