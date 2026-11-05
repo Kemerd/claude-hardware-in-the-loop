@@ -110,7 +110,24 @@ they are made to look tidy rather than removed.
 - **No model looks at a board for this.** The script measures; a person (or the DRC) judges the result. Nothing here
   spends tokens on screenshots.
 - **Setup.** KiCad's python has numpy but not shapely. Install it with
-  `"C:\Program Files\KiCad.0in\python.exe" -m pip install --target <dir> shapely` and set `HIL_KICAD_SITE=<dir>`.
+  `"C:\Program Files\KiCad\10.0\bin\python.exe" -m pip install --target <dir> shapely` and set `HIL_KICAD_SITE=<dir>`.
+
+## Stages: a board explains itself
+
+First pass, 2026-11-05. The rule is decided; the tooling is being proven on a 433-part board and will change.
+
+A layout that only satisfies the netlist works and can't be read. Open it and the parts look placed at random, then auto-routed until it passed. Nobody can review that by eye or find their way around it on the bench. So a board is laid out the way a person would explain the circuit: as named stages, each with a job, inputs and outputs, boxed and titled on the silkscreen, with the signal flowing from one to the next. A motor driver reads Opto-Isolation, Inverter, Gate Driver, H-Bridge, left to right. Thinking in stages also tends to give a more natural and more compact board.
+
+1. **Stage table first.** Before placement, every part goes in one named stage, in a file beside the board (`pcb/<board>/stages.json`): the stage name, its job in a few words, its inputs and outputs, its parts. Work it out from the netlist, not from where parts happen to sit.
+2. **Floorplan from the table.** One region per stage, in signal order where the board's shape allows. Fixed things come first: mounting, keep-outs, connector edges, thermal paths.
+3. **Parts stay in their stage.** A passive sits beside the pin it serves, in a tidy row, inside its stage's region. It does not go wherever there happens to be room.
+4. **Box and title on the silkscreen.** One rectangle and one title per stage, on each face it uses, with edges that line up. Boxes and titles go on before the label placer runs, and count as obstacles for it.
+5. **Don't fake it.** Sometimes that is just how the circuit is: a decoupling field under a BGA, or a bus that touches everything. Those parts belong to the chip's stage or to no box at all. A box around a fiction is worse than no box. Say why in the table.
+6. **Re-route, and look for a smaller board.** Stages are a placement decision, so they mean a new route. Each board that goes through this reports whether its outline can shrink, and what that changes in CAD and mass.
+
+**Stage review, required on every board.** An agent may get a first pass down however it can, to learn what fits. That first pass does not get routed or landed until it has been reviewed against the stages: a separate reviewer, not the author, renders both faces and asks of every part: is it in a stage, could it move into one, and can a stray group become a real stage or go inside one? The reviewer returns a list of moves or says why a part can't move, the author applies them, and only then does the board route. A dump that was never reviewed is not a finished board.
+
+Gate, by hand until the tool ships: every part in exactly one stage, no part outside its box, no two boxes overlapping, every box titled. Render both faces and read them: if you can't say what a region does, the stage isn't done.
 
 ## 3. Freerouting setup and flags
 

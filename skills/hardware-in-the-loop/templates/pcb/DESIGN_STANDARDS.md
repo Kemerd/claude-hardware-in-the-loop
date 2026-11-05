@@ -89,7 +89,17 @@ Until a row is decided, the rule that depends on it is reported as "undecided" b
 | WIRE-01 | Wire type, gauge and insulation chosen per run from a documented table (current, temperature, flex life); bundles derated per SAE AS50881 / FAA AC 43.13-1B chapter 11 practice. | Public AC 43.13-1B. | manual + harness JSON review |
 | WIRE-02 | Every connector has strain relief; wires are tied or bonded at the connector (IPC/WHMA-A-620 workmanship). | IPC/WHMA-A-620 (paywalled). | manual |
 
-## 9. Review checklist (manual items, every board)
+## 9. Board layout and look (STAGE, LOOK)
+
+First pass. Method and reasons: the skill's `docs/PCB.md`, "Stages" and "Board look".
+
+- **STAGE-01:** every part belongs to one named stage in `pcb/<board>/stages.json`, with its job, inputs and outputs.
+- **STAGE-02:** one floorplan region per stage, in signal order where the board's shape allows; passives sit beside the pin they serve, inside their stage.
+- **STAGE-03:** each stage has a rectangle and a title on silk, on each face it uses. No fake stages: say in the table when a group is just how the circuit is.
+- **STAGE-04:** a first pass may be rough, but no board routes or lands before a reviewer who is not its author has checked every part against the stages.
+- **LOOK-01:** every part keeps its reference designator on silk, placed by `pcb/tools/place_labels.py`. Never moved off silk to pass a check.
+
+## 10. Review checklist (manual items, every board)
 
 - resistor power and junction temperature at the worst-case ambient of section 0
 - creepage on any input above 50 V
