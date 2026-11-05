@@ -286,11 +286,16 @@ class Raster:
         np = self.np
         ring = sps.Outline(0)
         pts = [(pcbnew.ToMM(ring.CPoint(i).x), pcbnew.ToMM(ring.CPoint(i).y)) for i in range(ring.PointCount())]
-        X, Y = np.meshgrid(self.x0 + (np.arange(self.nx) + 0.5) * CELL, self.y0 + (np.arange(self.ny) + 0.5) * CELL, indexing="ij")
-        inside = np.zeros(X.shape, bool)
+        xs, ys = self.x0 + (np.arange(self.nx) + 0.5) * CELL, self.y0 + (np.arange(self.ny) + 0.5) * CELL
+        inside = np.zeros((self.nx, self.ny), bool)
         for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
-            if ay != by:
-                inside ^= ((ay > Y) != (by > Y)) & (X < (bx - ax) * (Y - ay) / (by - ay) + ax)
+            if ay == by:
+                continue
+            # An edge only flips the rows it spans, lo <= y < hi, so only those are touched. Over the whole grid a curved outline's thousand facets cost a full-board pass each: the 270 mm
+            # dock ring sat here for over 10 minutes and never reached its first title.
+            j0, j1 = int(np.searchsorted(ys, min(ay, by), "left")), int(np.searchsorted(ys, max(ay, by), "left"))
+            if j1 > j0:
+                inside[:, j0:j1] ^= xs[:, None] < ((bx - ax) * (ys[j0:j1] - ay) / (by - ay) + ax)[None, :]
         self.g |= ~inside
         for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
             if ax == bx or ay == by:       # straight edges are what a board has; a curve's tiny facets are covered by the crossing test
@@ -353,7 +358,15 @@ def title_spot(r, wide, tall, face, box, boxes, line, title_out=False, edge=""):
         free = r.free_spots(a, b)
         if free is None:
             continue
-        X, Y = np.meshgrid(r.x0 + np.arange(free.shape[0]) * CELL, r.y0 + np.arange(free.shape[1]) * CELL, indexing="ij")
+        # Nothing past TITLE_REACH from the box can win, so only that window is costed. The whole board is 29 million cells on the 270 mm dock ring, and doing that for every other box
+        # of every stage took over 70 minutes. The answer is the same spot: every cost below that is not 1e9 lies inside this window, in the same order.
+        i0 = max(int((box[0] - a - TITLE_REACH - r.x0) / CELL), 0)
+        i1 = min(int(math.ceil((box[2] + TITLE_REACH - r.x0) / CELL)) + 1, free.shape[0])
+        j0 = max(int((box[1] - b - TITLE_REACH - r.y0) / CELL), 0)
+        j1 = min(int(math.ceil((box[3] + TITLE_REACH - r.y0) / CELL)) + 1, free.shape[1])
+        if i1 <= i0 or j1 <= j0:
+            continue
+        X, Y = np.meshgrid(r.x0 + np.arange(i0, i1) * CELL, r.y0 + np.arange(j0, j1) * CELL, indexing="ij")
         # how far each spot stands in from the box's nearer sides: both positive = inside
         in_x, in_y = np.minimum(X - box[0], box[2] - X - a), np.minimum(Y - box[1], box[3] - Y - b)
         inside = (in_x >= 0) & (in_y >= 0)
@@ -381,7 +394,7 @@ def title_spot(r, wide, tall, face, box, boxes, line, title_out=False, edge=""):
         cost = np.where(in_ok & ~hug, T_INSIDE + slide + tie, cost)
         far = ~inside & ~beside & (other > 0) & (own <= TITLE_REACH)
         cost = np.where(far, T_FAR + 10.0 * own + tie + np.where(other > own, 0.0, 100.0), cost)      # past that, at least not nearer to a box it does not name
-        cost = np.where(free, cost, 1e9)
+        cost = np.where(free[i0:i1, j0:j1], cost, 1e9)
         i, j = np.unravel_index(int(np.argmin(cost)), cost.shape)
         if cost[i, j] < 1e8 and (best is None or cost[i, j] < best[0]):
             best = (float(cost[i, j]), float(X[i, j]), float(Y[i, j]), a, b, ang, float(own[i, j]))
