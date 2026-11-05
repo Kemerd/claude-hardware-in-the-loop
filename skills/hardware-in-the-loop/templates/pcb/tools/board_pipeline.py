@@ -998,6 +998,15 @@ class Board:
         helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "place_labels.py")
         if not os.path.isfile(helper):
             raise PipelineError(f"{self.name}: {helper} is missing")
+        # a board with a stage table gets its boxes and titles first: the label placer treats them as obstacles
+        stages = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stages.py")
+        tables = (os.path.join(self.kdir, f"{self.name}.stages.json"), os.path.join(self.kdir, "stages.json"), os.path.join(os.path.dirname(self.kdir), "stages.json"))
+        staged = os.path.isfile(stages) and any(os.path.isfile(t) for t in tables)
+        if staged:
+            d = subprocess.run([sys.executable, stages, "draw", pcb_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            self._log(f"stages draw: exit {d.returncode}")
+            if d.returncode == 2:
+                raise PipelineError(f"{self.name}: the stage table could not be read: {(d.stderr or d.stdout or '')[-300:]}")
         r = subprocess.run([sys.executable, helper, pcb_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
         lines = [ln for ln in (r.stdout or "").splitlines() if ln.startswith(("place_labels:", "  "))]
         with open(os.path.join(self.kdir, "place_labels.log"), "w", encoding="utf-8", newline="\n") as fh:
@@ -1007,6 +1016,14 @@ class Board:
         self._log(f"labels: {lines[-1] if lines else 'no output'} (exit {r.returncode})")
         if r.returncode == 2:
             raise PipelineError(f"{self.name}: place_labels could not process the board: {(r.stderr or r.stdout or '')[-300:]}")
+        if staged:
+            # the stage report counts and does not block: stages are a strong guideline, not a wall
+            c = subprocess.run([sys.executable, stages, "check", pcb_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+            with open(os.path.join(self.kdir, "stages_report.txt"), "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(c.stdout or "")
+                fh.write(c.stderr or "")
+            self.res["steps"]["stages"] = {"exit": c.returncode}
+            self._log(f"stages check: exit {c.returncode}, see stages_report.txt")
 
     def route(self, reroute: bool = False) -> dict:
         """

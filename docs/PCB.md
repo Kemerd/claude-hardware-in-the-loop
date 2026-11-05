@@ -114,14 +114,20 @@ they are made to look tidy rather than removed.
 
 ## Stages: a board explains itself
 
-First pass, 2026-11-05. The rule is decided; the tooling is being proven on a 433-part board and will change.
+First pass, 2026-11-05. The rule is decided. `pcb/tools/stages.py` ships with it and is being proven on a 433-part board, so both will change.
 
 A layout that only satisfies the netlist works and can't be read. Open it and the parts look placed at random, then auto-routed until it passed. Nobody can review that by eye or find their way around it on the bench. So a board is laid out the way a person would explain the circuit: as named stages, each with a job, inputs and outputs, boxed and titled on the silkscreen, with the signal flowing from one to the next. A motor driver reads Opto-Isolation, Inverter, Gate Driver, H-Bridge, left to right. Thinking in stages also tends to give a more natural and more compact board.
 
-1. **Stage table first.** Before placement, every part goes in one named stage, in a file beside the board (`pcb/<board>/stages.json`): the stage name, its job in a few words, its inputs and outputs, its parts. Work it out from the netlist, not from where parts happen to sit.
+1. **Stage table first.** Before placement, every part goes in one named stage, in `<board>.stages.json` or `stages.json` beside the board: the stage name, its job in a few words, its inputs and outputs, its parts. Work it out from the netlist, not from where parts happen to sit. Format in the header of `stages.py`:
+
+   ```json
+   {"exceptions": {"R12": "add-on pull-up, stands where the wire passes"},
+    "stages": [{"name": "PUSH-PULL DRIVER", "job": "turns the inverter's logic into gate current",
+                "parts": ["U1", "Q1-Q4", "R7"], "kind": "real", "in": ["GATE_[AB]"], "out": ["DRV_[AB]"]}]}
+   ```
 2. **Floorplan from the table.** One region per stage, in signal order where the board's shape allows. Fixed things come first: mounting, keep-outs, connector edges, thermal paths.
 3. **Parts stay in their stage.** A passive sits beside the pin it serves, in a tidy row, inside its stage's region. It does not go wherever there happens to be room.
-4. **Box and title on the silkscreen.** One rectangle and one title per stage, on each face it uses, with edges that line up. Boxes and titles go on before the label placer runs, and count as obstacles for it.
+4. **Box and title on the silkscreen.** `python pcb/tools/stages.py draw <board>` draws one box and one title per stage on each face it uses, computed from the parts, so a box can't drift from the board. They go on before `place_labels.py` runs, and count as obstacles for it. `board_pipeline.py` does both when a table exists.
 5. **Don't fake it.** Sometimes that is just how the circuit is: a decoupling field under a BGA, or a bus that touches everything. Those parts belong to the chip's stage or to no box at all. A box around a fiction is worse than no box. Say why in the table.
 6. **Re-route, and look for a smaller board.** Stages are a placement decision, so they mean a new route. Each board that goes through this reports whether its outline can shrink, and what that changes in CAD and mass.
 
@@ -129,7 +135,7 @@ A layout that only satisfies the netlist works and can't be read. Open it and th
 
 **Stage review, required on every board.** An agent may get a first pass down however it can, to learn what fits. That first pass does not get routed or landed until it has been reviewed against the stages: a separate reviewer, not the author, renders both faces and asks of every part: is it in a stage, could it move into one, and can a stray group become a real stage or go inside one? The reviewer returns a list of moves or says why a part can't move, the author applies them, and only then does the board route. A dump that was never reviewed is not a finished board.
 
-Check, by hand until the tool ships, and it reports rather than blocks: every part in one stage or listed as an exception, parts inside their box, boxes clear of each other or only slightly overlapping, every box titled. Render both faces and read them: if you can't say what a region does, the stage isn't done.
+`python pcb/tools/stages.py check <board>` reports and does not block. Errors are only a table naming a part that isn't on the board, or a part in two stages. Everything else is a counted warning: a part in no stage, strays, boxes overlapping past `overlap_ok` (1.0 mm by default), no room for a title. `"exceptions"` and `"box": false` cover the parts and groups that don't fit. Render both faces and read them: if you can't say what a region does, the stage isn't done.
 
 ## 3. Freerouting setup and flags
 
