@@ -142,6 +142,14 @@ A layout that only satisfies the netlist works and can't be read. Open it and th
 
 `python pcb/tools/stages.py check <board>` reports and does not block. Errors are only a table naming a part that isn't on the board, or a part in two stages. Everything else is a counted warning: a part in no stage, strays (a part whose middle stands in another stage's box), boxes overlapping past `overlap_ok` (1.0 mm by default), no room for a title, a title that had to stand far from its box (`title_far`). A title is placed inside at a corner, else against one edge outside and nearer its own box than any other. `"exceptions"` and `"box": false` cover the parts and groups that don't fit. Render both faces and read them: if you can't say what a region does, the stage isn't done.
 
+**Rows.** Passives stand in rows beside the pins they serve, ordered by where their signals go, so wires leave without crossing. On a dense board, 0402s at 2.15 mm along the row and 1.6 mm between rows: a through via fits in the corner of four pads, and a 0.6 mm label fits above each part. At 1.23 mm between rows the labels got pushed up to 8 mm away. Two rows can share one label strip. Labels that fight you mean the floorplan is short of room.
+
+**A table is not a finished board.** `"box": false` is for a group that is no real stage. It is not the way out for a dense board. If the check shows hundreds of strays, the placement is wrong: write the regions first, place from them, route. One 232-part board went from 473 strays to 0 that way, and from 4.4 m of copper to 2.74 m.
+
+**Name and rev.** `"marks": [{"text": "BOARD A1", "face": "F", "x": 150, "y": 100, "h": 1.0}]` in the table, centre in sheet mm. `draw` writes them with the boxes, so titles and labels keep clear of them.
+
+**Title height.** The label placer writes the size it settled on into the project's minimum text height. A stage title smaller than the labels then fails DRC's text check: keep titles at or above label size.
+
 Tips from the first boards. On a small board use `"grid": 0.1` and `"margin": 0` and keep titles to four or five letters. `"title_out": true` puts a stage's title against the outside of its box, worth it when the room inside is worth more to the labels, and `"title_edge"` (N, S, E or W) picks which edge it stands against. Merge landing pads and laps into the stage they feed. Leave label room in the floorplan: if the labels fight you, the floorplan is short of room.
 
 ## 3. Freerouting setup and flags

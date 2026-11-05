@@ -152,6 +152,9 @@ def load_table(path):
             raise ValueError("%s: %s: kind must be real or partial" % (path, s["name"]))
         if s.get("title_edge", "N") not in ("N", "S", "E", "W"):
             raise ValueError("%s: %s: title_edge must be N, S, E or W" % (path, s["name"]))
+    for m in t.get("marks", ()):
+        if not isinstance(m, dict) or not m.get("text") or m.get("face") not in ("F", "B") or not all(isinstance(m.get(k), (int, float)) for k in ("x", "y")):
+            raise ValueError("%s: a mark needs text, face F or B, x and y: %r" % (path, m))
     return t
 
 
@@ -207,6 +210,43 @@ def settle(b, inner, pads, half):
 def box_lines(b):
     """The four lines of a box."""
     return ((b[0], b[1], b[2], b[1]), (b[2], b[1], b[2], b[3]), (b[2], b[3], b[0], b[3]), (b[0], b[3], b[0], b[1]))
+
+
+def clip_line(ln, rects, inside=None, step=0.05, shortest=0.3):
+    """The runs of an axis-parallel box line that stand clear of rects, each (x0, y0, x1, y1). A box stays readable with a gap in it; a line over a pad, a part's own
+    silk or a title is what the fab scrapes off, or what prints as a smear. inside(x, y) is False past the board edge. A run under `shortest` is a speck and goes."""
+    x0, y0, x1, y1 = ln
+    length = math.hypot(x1 - x0, y1 - y0)
+    n = max(1, int(round(length / step)))
+    near = [q for q in rects if not (max(x0, x1) < q[0] or min(x0, x1) > q[2] or max(y0, y1) < q[1] or min(y0, y1) > q[3])]
+    runs, start, last = [], None, None
+    for k in range(n + 1):
+        x, y = x0 + (x1 - x0) * k / n, y0 + (y1 - y0) * k / n
+        free = not any(q[0] <= x <= q[2] and q[1] <= y <= q[3] for q in near) and (inside is None or inside(x, y))
+        if free:
+            start = (x, y) if start is None else start
+            last = (x, y)
+        elif start is not None:
+            runs.append((start[0], start[1], last[0], last[1]))
+            start = None
+    if start is not None:
+        runs.append((start[0], start[1], last[0], last[1]))
+    return [tuple(round(v, 3) for v in q) for q in runs if math.hypot(q[2] - q[0], q[3] - q[1]) >= shortest]
+
+
+def silk_boxes(board):
+    """The bounding box of every footprint silk line and shape, per face. A reference is not here: place_labels.py places those round the box lines."""
+    import pcbnew
+    to = pcbnew.ToMM
+    out = {"F": [], "B": []}
+    for fp in board.GetFootprints():
+        for it in fp.GraphicalItems():
+            face = {pcbnew.F_SilkS: "F", pcbnew.B_SilkS: "B"}.get(it.GetLayer())
+            if face is None or it.GetClass() == "PCB_TEXT":
+                continue
+            b = it.GetBoundingBox()
+            out[face].append((to(b.GetLeft()), to(b.GetTop()), to(b.GetRight()), to(b.GetBottom())))
+    return out
 
 
 def read_board(board):
@@ -291,8 +331,8 @@ class Raster:
         for (ax, ay), (bx, by) in zip(pts, pts[1:] + pts[:1]):
             if ay == by:
                 continue
-            # An edge only flips the rows it spans, lo <= y < hi, so only those are touched. Over the whole grid a curved outline's thousand facets cost a full-board pass each: the 270 mm
-            # dock ring sat here for over 10 minutes and never reached its first title.
+            # An edge only flips the rows it spans, lo <= y < hi, so only those are touched. Over the whole grid a curved outline's thousand facets cost a full-board pass each: a 270 mm
+            # ring board sat here for over 10 minutes and never reached its first title.
             j0, j1 = int(np.searchsorted(ys, min(ay, by), "left")), int(np.searchsorted(ys, max(ay, by), "left"))
             if j1 > j0:
                 inside[:, j0:j1] ^= xs[:, None] < ((bx - ax) * (ys[j0:j1] - ay) / (by - ay) + ax)[None, :]
@@ -327,6 +367,22 @@ def make_title(board, s, face, cfg):
     return t
 
 
+def make_mark(board, m, cfg):
+    """A mark as a board text, placed: a title's lettering at the mark's own height."""
+    import pcbnew
+    t = make_title(board, m["text"], m["face"], dict(cfg, title=float(m.get("h", cfg["title"]))))
+    t.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(float(m["x"])), pcbnew.FromMM(float(m["y"]))))
+    return t
+
+
+def mark_box(board, m, cfg):
+    """The room a mark takes: its box and the gap a line keeps from a title."""
+    import pcbnew
+    b = make_mark(board, m, cfg).GetBoundingBox()
+    g = cfg["line"] / 2 + 0.02
+    return (pcbnew.ToMM(b.GetLeft()) - g, pcbnew.ToMM(b.GetTop()) - g, pcbnew.ToMM(b.GetRight()) + g, pcbnew.ToMM(b.GetBottom()) + g)
+
+
 def letters_wide(t):
     """Width of a text's letters, mm. KiCad's own box adds a margin past each end, 0.27 mm on a 1.5 mm word, and a title on a small board needs that room."""
     import pcbnew
@@ -358,7 +414,7 @@ def title_spot(r, wide, tall, face, box, boxes, line, title_out=False, edge=""):
         free = r.free_spots(a, b)
         if free is None:
             continue
-        # Nothing past TITLE_REACH from the box can win, so only that window is costed. The whole board is 29 million cells on the 270 mm dock ring, and doing that for every other box
+        # Nothing past TITLE_REACH from the box can win, so only that window is costed. The whole board is 29 million cells on a 270 mm ring board, and doing that for every other box
         # of every stage took over 70 minutes. The answer is the same spot: every cost below that is not 1e9 lies inside this window, in the same order.
         i0 = max(int((box[0] - a - TITLE_REACH - r.x0) / CELL), 0)
         i1 = min(int(math.ceil((box[2] + TITLE_REACH - r.x0) / CELL)) + 1, free.shape[0])
@@ -414,6 +470,7 @@ def layout(board, table):
     power = re.compile(table.get("power", POWER))
     bad = dict(unknown=[], twice=[], no_stage=[], stray=[], overlap=[], off_board=[], line_on_pad=[], no_title=[], title_far=[], bad_io=[], stale=[])
     owner, stages = {}, []
+    marks = table.get("marks", [])       # free text a board carries for its own sake: name and rev. {"text", "face", "x", "y", "h"}, its centre in sheet mm
     excused = table.get("exceptions", {})
     bad["unknown"] += ["exceptions: " + r for r in excused if r not in parts]
     bad["unknown"] += ["exceptions: %s has no reason" % r for r, why in excused.items() if not str(why).strip()]
@@ -424,7 +481,7 @@ def layout(board, table):
             if r in owner and owner[r] != st["name"]:
                 bad["twice"].append("%s in %s and %s" % (r, owner[r], st["name"]))
             owner[r] = st["name"]
-        stages.append(dict(name=st["name"], kind=st.get("kind", "real"), job=st["job"], parts=sorted(set(got)), boxes={}, titles={}, title_out=st.get("title_out", False), title_edge=st.get("title_edge", "")))
+        stages.append(dict(name=st["name"], kind=st.get("kind", "real"), job=st["job"], parts=sorted(set(got)), boxes={}, titles={}, lines={}, title_out=st.get("title_out", False), title_edge=st.get("title_edge", "")))
     bad["no_stage"] = sorted(r for r in refs if r not in owner and r not in excused)
     # ---- a stage's in and out must be nets its parts really touch ----
     nets_of = {}
@@ -464,9 +521,6 @@ def layout(board, table):
         for face, b in s["boxes"].items():
             bad["stray"] += ["%s %s: %s" % (s["name"], face, r) for r, p in parts.items() if r not in mine and r not in excused and p["face"] == face and within(p["box"], b)]
             for x0, y0, x1, y1 in box_lines(b):
-                t = cfg["line"] / 2
-                ln = (min(x0, x1) - t, min(y0, y1) - t, max(x0, x1) + t, max(y0, y1) + t)
-                bad["line_on_pad"] += ["%s %s: %s pad %s" % (s["name"], face, r, n) for r, n, q in pads[face] if overlaps(ln, q, 0.0)]
                 if sps is not None:
                     n = max(2, int(max(abs(x1 - x0), abs(y1 - y0)) / 0.5))
                     if not all(sps.Contains(pcbnew.VECTOR2I(pcbnew.FromMM(x0 + (x1 - x0) * k / n), pcbnew.FromMM(y0 + (y1 - y0) * k / n))) for k in range(n + 1)):
@@ -476,13 +530,16 @@ def layout(board, table):
         on = [(s["name"], s["boxes"][face]) for s in stages if face in s["boxes"]]
         bad["overlap"] += ["%s / %s on %s" % (a[0], c[0], face) for i, a in enumerate(on) for c in on[i + 1:] if overlaps(a[1], c[1], cfg["overlap_ok"])]
     # ---- titles last, round everything else ----
+    silk = silk_boxes(board)
     for face in "FB":
         ras = Raster((edge[0] - 0.5, edge[1] - 0.5, edge[2] + 0.5, edge[3] + 0.5))
         if sps is not None:
             ras.mark_outside(sps, ei)
         gap = max(cfg["title_pad"] - cfg["title_gap"], 0.0)       # the title's own size already holds title_gap: together they make the fab's pad gap, not twice it
+        board_area = max((edge[2] - edge[0]) * (edge[3] - edge[1]), 1e-9)
         for p in parts.values():
-            if p["face"] == face:
+            # a footprint whose courtyard is most of the board (a contact-pad field is the board itself) would take every cell and leave no title a spot: its pads, marked below, stand for it
+            if p["face"] == face and (p["box"][2] - p["box"][0]) * (p["box"][3] - p["box"][1]) < 0.6 * board_area:
                 ras.mark(p["box"])
         for _r, _n, q in pads[face]:
             (ras.mark_disc if q in discs else ras.mark)((q[0] - gap, q[1] - gap, q[2] + gap, q[3] + gap))
@@ -491,6 +548,11 @@ def layout(board, table):
                 for x0, y0, x1, y1 in box_lines(s["boxes"][face]):
                     t = cfg["line"] / 2
                     ras.mark((min(x0, x1) - t, min(y0, y1) - t, max(x0, x1) + t, max(y0, y1) + t))
+        for q in silk[face]:                                      # a title on a part's own outline is a silk_overlap in DRC
+            ras.mark(q)
+        for m in marks:
+            if m["face"] == face:
+                ras.mark(mark_box(board, m, cfg))
         for s in stages:
             if face in s["boxes"]:
                 others = [o["boxes"][face] for o in stages if o is not s and face in o["boxes"]]
@@ -501,7 +563,46 @@ def layout(board, table):
                         bad["title_far"].append("%s %s: %.1f mm from its box" % (s["name"], face, got["gap"]))
     # ---- a stage boxed on both faces needs its title on one of them ----
     bad["no_title"] = [s["name"] for s in stages if s["boxes"] and not s["titles"]]
-    return dict(cfg=cfg, stages=stages, problems=bad, parts=len(parts), excused=len(excused))
+    # ---- the lines stop short of what they may not print over: pads, the parts' own silk, titles, the board edge, notch included. Every run is then judged again ----
+    t = cfg["line"] / 2
+    pad_gap, silk_gap = t + cfg["title_pad"] / 2, t + 0.02
+    ring = None
+    if sps is not None:
+        r0 = sps.Outline(0)
+        ring = [(pcbnew.ToMM(r0.CPoint(i).x), pcbnew.ToMM(r0.CPoint(i).y)) for i in range(r0.PointCount())]
+
+    def inside(x, y):
+        """True on the board and at least the edge inset from every side of it."""
+        if ring is None:
+            return True
+        hit = False
+        for (ax, ay), (bx, by) in zip(ring, ring[1:] + ring[:1]):
+            if (ay > y) != (by > y) and x < (bx - ax) * (y - ay) / (by - ay) + ax:
+                hit = not hit
+            dx, dy = bx - ax, by - ay
+            u = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / ((dx * dx + dy * dy) or 1e-9)))
+            if math.hypot(ax + u * dx - x, ay + u * dy - y) < inset:
+                return False
+        return hit
+    for face in "FB":
+        rects = [(q[0] - pad_gap, q[1] - pad_gap, q[2] + pad_gap, q[3] + pad_gap) for _r, _n, q in pads[face]]
+        rects += [(q[0] - silk_gap, q[1] - silk_gap, q[2] + silk_gap, q[3] + silk_gap) for q in silk[face]]
+        rects += [mark_box(board, m, cfg) for m in marks if m["face"] == face]
+        for s in stages:
+            q = s["titles"].get(face)
+            if q:
+                tx = make_title(board, s["name"], face, cfg)
+                tx.SetPosition(pcbnew.VECTOR2I(pcbnew.FromMM(q["x"]), pcbnew.FromMM(q["y"])))
+                tx.SetTextAngleDegrees(q["angle"])
+                b = tx.GetBoundingBox()
+                rects.append((pcbnew.ToMM(b.GetLeft()) - silk_gap, pcbnew.ToMM(b.GetTop()) - silk_gap, pcbnew.ToMM(b.GetRight()) + silk_gap, pcbnew.ToMM(b.GetBottom()) + silk_gap))
+        for s in stages:
+            if face in s["boxes"]:
+                s["lines"][face] = [run for ln in box_lines(s["boxes"][face]) for run in clip_line(ln, rects, inside)]
+                for x0, y0, x1, y1 in s["lines"][face]:
+                    ln = (min(x0, x1) - t, min(y0, y1) - t, max(x0, x1) + t, max(y0, y1) + t)
+                    bad["line_on_pad"] += ["%s %s: %s pad %s" % (s["name"], face, r, n) for r, n, q in pads[face] if overlaps(ln, q, 0.0)]
+    return dict(cfg=cfg, stages=stages, problems=bad, parts=len(parts), excused=len(excused), marks=marks)
 
 
 def stale(res, path):
@@ -509,11 +610,12 @@ def stale(res, path):
     lines, titles = drawn_items(path)
     want, wt = set(), set()
     for s in res["stages"]:
-        for face, b in s["boxes"].items():
-            want |= {key_line(face, *ln) for ln in box_lines(b)}
+        for face in s["boxes"]:
+            want |= {key_line(face, *ln) for ln in s["lines"].get(face, ())}
             if face in s["titles"]:
                 wt.add((face, s["name"]))
     out = ["box line not drawn: %s" % (q,) for q in sorted(want - lines)] + ["line with no stage: %s" % (q,) for q in sorted(lines - want)]
+    wt |= {(m["face"], m["text"]) for m in res.get("marks", ())}
     return out + ["title not drawn: %s %s" % q for q in sorted(wt - titles)] + ["title with no stage: %s %s" % q for q in sorted(titles - wt)]
 
 
@@ -537,8 +639,8 @@ def draw(path, table):
     board.Add(grp)
     cfg = res["cfg"]
     for s in res["stages"]:
-        for face, b in s["boxes"].items():
-            for x0, y0, x1, y1 in box_lines(b):
+        for face in s["boxes"]:
+            for x0, y0, x1, y1 in s["lines"].get(face, ()):
                 ln = pcbnew.PCB_SHAPE(board)
                 ln.SetShape(pcbnew.SHAPE_T_SEGMENT)
                 ln.SetLayer(pcbnew.B_SilkS if face == "B" else pcbnew.F_SilkS)
@@ -554,6 +656,10 @@ def draw(path, table):
                 t.SetTextAngleDegrees(q["angle"])
                 board.Add(t)
                 grp.AddItem(t)
+    for m in res["marks"]:
+        t = make_mark(board, m, cfg)
+        board.Add(t)
+        grp.AddItem(t)
     board.Save(path)
     return res
 
@@ -600,7 +706,7 @@ def main():
 
 
 def boot():
-    """Under plain python start again under KiCad's, with its per-user folders off the home directory, as the other board tools do."""
+    """Under plain python start again under KiCad's, as the other board tools do."""
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
