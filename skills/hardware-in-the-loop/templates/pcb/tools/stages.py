@@ -51,7 +51,7 @@ TITLE_REACH = 3.0                        # mm, furthest a title is looked for fr
 TITLE_CLEAR = 0.3                        # mm, how much further from any other box than from its own: a title merely 0.01 nearer its own box still reads as heading the other one
 T_CORNER, T_EDGE, T_INSIDE, T_FAR = 0.0, 100.0, 200.0, 1000.0      # place_title's order of preference: each one beats everything after it
 T_ROT, T_ENDWAYS = 3.0, 8.0              # a title on its side; one that meets its edge with its short end, which reads as a word beside a box and not as the box's name
-DEFAULTS = dict(grid=0.5, margin=0.2, line=0.15, title=1.0, title_stroke=0.15, title_gap=0.05, title_pad=0.15, edge=0.2, overlap_ok=1.0)
+DEFAULTS = dict(grid=0.5, margin=0.2, line=0.15, title=1.0, title_stroke=0.15, title_gap=0.05, title_pad=0.15, edge=0.2, overlap_ok=1.0, share=0.6, dash=0.6, gap=1.0)
 ERRORS = ("unknown", "twice")            # plainly broken; everything else is a count to bring down
 # Rails and ground are not a stage's inputs and outputs: they reach everything. A table can give its own pattern as "power"
 POWER = r"(GND.*|[AP]GND|\+.*|VCC.*|VDD.*|VBAT.*|VSYS|VBUS|VIN.*|\d+V\d*.*|-.*)"
@@ -205,6 +205,100 @@ def settle(b, inner, pads, half):
                 break
             b[i] = round(b[i] - sign * 0.05, 3)
     return tuple(b)
+
+
+def line_cost(p, ax, ends, parts, pads):
+    """What a line at p on axis ax would run over between ends: a pad is what the line has to break for, a part's body only looks untidy."""
+    def crossed(q):
+        return q[ax] < p < q[ax + 2] and q[1 - ax] < ends[1] and q[3 - ax] > ends[0]
+    return 50.0 * sum(1 for q in pads if crossed(q)) + 5.0 * sum(1 for q in parts if crossed(q))
+
+
+def share_edges(boxes, members, parts, pads, near):
+    """
+    Each box hugs its own parts, so two neighbours end up with their edges a fraction of a mm apart or a fraction past each other, and that prints as a double line that means nothing.
+    A pair like that gets one line. It goes in the middle of the difference if it can, and slides toward whichever side keeps it off pads and part bodies, so a tight spot is decided by
+    what is there. Every part stays on its own side, which is what makes this safe: an overlap that exists because the parts really do interleave stays, and the report still counts it.
+    A line already shared is fixed, so a third box comes to that line instead of starting another one.
+
+    boxes: the boxes of one face, lists, changed in place. members: each box's parts, as boxes. parts, pads: everything on the face. near: mm, the widest gap that still reads as double.
+    """
+    fixed = set()
+
+    def jobs():
+        """Every pair of facing edges still worth a look, tightest first, because those are the ones that read as a double line."""
+        out = []
+        for i, a in enumerate(boxes):
+            for j, b in enumerate(boxes):
+                for ax in (0, 1):
+                    # a stands before b on this axis; a box inside another has no facing edge to share
+                    if i == j or a[ax] >= b[ax] or a[ax + 2] >= b[ax + 2]:
+                        continue
+                    run = min(a[3 - ax], b[3 - ax]) - max(a[1 - ax], b[1 - ax])
+                    d = a[ax + 2] - b[ax]                 # past 0 they overlap, under it there is a gap
+                    if run > 0.3 and d >= -near and abs(d) > 0.001:
+                        out.append((abs(d), i, j, ax))
+        return sorted(out)
+
+    for _ in range(4 * max(len(boxes), 1)):                     # each pass settles at least one pair or stops
+        done = False
+        for _d, i, j, ax in jobs():
+            a, b = boxes[i], boxes[j]
+            hi, lo = a[ax + 2], b[ax]
+            fa, fb = (i, ax + 2) in fixed, (j, ax) in fixed
+            if fa and fb:
+                continue
+            ends = (min(a[1 - ax], b[1 - ax]), max(a[3 - ax], b[3 - ax]))
+            mid, wide = (hi + lo) / 2, abs(hi - lo) / 2
+            spots = [hi] if fa else [lo] if fb else [round(mid + sign * k * 0.05, 3) for k in range(int(wide / 0.05) + 1) for sign in (1, -1)]
+            best = None
+            for p in spots:
+                # the middle of each part stays on its own side, or the box no longer holds it
+                if any((q[ax] + q[ax + 2]) / 2 >= p for q in members[i]) or any((q[ax] + q[ax + 2]) / 2 <= p for q in members[j]):
+                    continue
+                c = abs(p - mid) + line_cost(p, ax, ends, parts, pads)
+                if best is None or c < best[0] - 1e-9:
+                    best = (c, p)
+            if best is None:
+                continue                                        # nothing legal: this pair keeps its overlap and the report says so
+            a[ax + 2] = b[ax] = best[1]
+            fixed |= {(i, ax + 2), (j, ax)}
+            done = True
+            break                                               # the edges moved, so the list of pairs has to be worked out again
+        if not done:
+            break
+
+
+def minus_drawn(run, drawn):
+    """What is left of a line once the lines already drawn on the same axis are taken away, so a shared edge prints once."""
+    x0, y0, x1, y1 = run
+    ax = 0 if abs(y0 - y1) < 1e-6 else 1
+    at, lo, hi = (y0, min(x0, x1), max(x0, x1)) if ax == 0 else (x0, min(y0, y1), max(y0, y1))
+    left = [(lo, hi)]
+    for q in drawn:
+        if (ax == 0) != (abs(q[1] - q[3]) < 1e-6) or abs((q[1] if ax == 0 else q[0]) - at) > 1e-6:
+            continue
+        c, d = (min(q[0], q[2]), max(q[0], q[2])) if ax == 0 else (min(q[1], q[3]), max(q[1], q[3]))
+        left = [piece for u, v in left for piece in ((u, min(v, c)), (max(u, d), v)) if piece[1] - piece[0] > 0.02]
+    if left == [(lo, hi)]:
+        return [run]                  # nothing taken: the line stays exactly as it was, direction included, so a board with no shared edge reads as unchanged
+    return [(u, at, v, at) if ax == 0 else (at, u, at, v) for u, v in left]
+
+
+def dash_line(run, dash, gap):
+    """
+    A line as short dashes. They are real segments, not KiCad's dashed line type: that takes its proportions from the plot settings, so the editor, a render and the gerbers can each come out
+    different, and the fab prints the gerbers. The gap stretches a little so a dash lands on both ends, which keeps a box's corners closed and a line that stops at a pad looking deliberate.
+    dash <= 0 leaves the line solid. A line too short for two dashes stays whole.
+    """
+    x0, y0, x1, y1 = run
+    length = math.hypot(x1 - x0, y1 - y0)
+    if dash <= 0.0 or length < 2 * dash + gap:
+        return [run]
+    n = int((length + gap) // (dash + gap))                 # how many dashes fit at the asked gap
+    step = (length - dash) / (n - 1)
+    ux, uy = (x1 - x0) / length, (y1 - y0) / length
+    return [tuple(round(v, 3) for v in (x0 + ux * k * step, y0 + uy * k * step, x0 + ux * (k * step + dash), y0 + uy * (k * step + dash))) for k in range(n)]
 
 
 def box_lines(b):
@@ -514,6 +608,16 @@ def layout(board, table):
             b = snap_out((inner[0] - m, inner[1] - m, inner[2] + m, inner[3] + m), g)
             b = (max(b[0], lim[0]), max(b[1], lim[1]), min(b[2], lim[2]), min(b[3], lim[3]))
             s["boxes"][face] = settle(b, inner, pads[face], cfg["line"] / 2)
+    # ---- neighbours that nearly meet share one line. Stages with a box of their own on this face only; "share": 0 in the table turns it off ----
+    for face in "FB":
+        on = [s for s in stages if face in s["boxes"]]
+        if cfg["share"] <= 0.0 or len(on) < 2:
+            continue
+        boxes = [list(s["boxes"][face]) for s in on]
+        members = [[parts[r]["box"] for r in s["parts"] if parts[r]["face"] == face and r not in excused] for s in on]
+        share_edges(boxes, members, [p["box"] for p in parts.values() if p["face"] == face], [q for _r, _n, q in pads[face]], cfg["share"])
+        for s, b in zip(on, boxes):
+            s["boxes"][face] = tuple(b)
     # ---- what a box may not do ----
     import pcbnew
     for s in stages:
@@ -596,9 +700,12 @@ def layout(board, table):
                 tx.SetTextAngleDegrees(q["angle"])
                 b = tx.GetBoundingBox()
                 rects.append((pcbnew.ToMM(b.GetLeft()) - silk_gap, pcbnew.ToMM(b.GetTop()) - silk_gap, pcbnew.ToMM(b.GetRight()) + silk_gap, pcbnew.ToMM(b.GetBottom()) + silk_gap))
+        drawn = []                                                # a shared edge belongs to two boxes and prints once
         for s in stages:
             if face in s["boxes"]:
-                s["lines"][face] = [run for ln in box_lines(s["boxes"][face]) for run in clip_line(ln, rects, inside)]
+                solid = [piece for ln in box_lines(s["boxes"][face]) for run in clip_line(ln, rects, inside) for piece in minus_drawn(run, drawn)]
+                drawn += solid
+                s["lines"][face] = [piece for run in solid for piece in dash_line(run, cfg["dash"], cfg["gap"])]
                 for x0, y0, x1, y1 in s["lines"][face]:
                     ln = (min(x0, x1) - t, min(y0, y1) - t, max(x0, x1) + t, max(y0, y1) + t)
                     bad["line_on_pad"] += ["%s %s: %s pad %s" % (s["name"], face, r, n) for r, n, q in pads[face] if overlaps(ln, q, 0.0)]

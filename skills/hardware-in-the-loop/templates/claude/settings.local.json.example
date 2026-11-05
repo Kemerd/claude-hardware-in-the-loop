@@ -4,6 +4,17 @@
     "command": "python -I \"$CLAUDE_PROJECT_DIR/harness/swarm/usage_statusline.py\""
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -I \"$CLAUDE_PROJECT_DIR/tools/hil_update.py\" check",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "*",

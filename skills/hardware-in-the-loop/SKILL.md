@@ -74,7 +74,8 @@ breakout that runs every pipeline step) and the example enclosure builder with t
 
 It also writes the digital twin (`sim/twin/`: models, plant, C ABI, runner, scenarios, CUDA sweep, tools), the
 firmware core (`firmware/core/`), `sim/unreal/` when the tiers name Unreal, `sim/isaac/` when they name Isaac,
-`DECISIONS.md`, `QUESTIONS.md`, `CITATION.md`, `tools/check_citations.py` and `tools/archive_tmp.py`.
+`DECISIONS.md`, `QUESTIONS.md`, `CITATION.md`, `tools/check_citations.py`, `tools/archive_tmp.py`, `tools/hil_update.py`
+and the version stamp `harness/TEMPLATE_VERSION.json` (section 8c).
 
 Then fill the decision table in `pcb/DESIGN_STANDARDS.md` section 0 from the answers, and make the archive link
 (`mklink /J .archive "<archive path>"` on Windows, `ln -s <archive path> .archive` elsewhere; ask first).
@@ -238,6 +239,22 @@ datasheet line or decision behind it, and run an adversarial review pass: fresh 
 board, BOM, CAD exports, firmware diff, twin results), not your conclusions, and hunt for what the gates do not
 check. Findings go into the report; the owner decides the order. Keep it friendly and brief; the point is a second
 pair of eyes, not a ceremony.
+
+## 8c. Versions and updates
+
+`VERSION` and `CHANGELOG.md` in this folder are the method's version. The scaffold stamps every project with it
+(`harness/TEMPLATE_VERSION.json`: version, options chosen, a hash per template file) and copies `tools/hil_update.py`;
+the `SessionStart` hook in `.claude/settings.local.json` runs its `check`, which compares against `main` of
+https://github.com/Kemerd/claude-hardware-in-the-loop and, when upstream is ahead, shows the changelog entries in
+between. Many owners never use this skill again after the scaffold and customise every template, so updating works
+from the project alone and never overwrites a file the project changed: `check` -> ask the owner -> `plan` ->
+`apply` -> merge the diffs by hand -> `mark` (procedure in the project's `README_AGENT.md` section 7).
+A project from before versions: `python -I tools/hil_update.py adopt`.
+
+When you change anything under `skills/hardware-in-the-loop/` in the method repository itself: bump `VERSION`
+(patch for fixes, minor for new tools or better prompts, major for changes that need a migration) and add a
+`CHANGELOG.md` section above the others, in plain words for the project owner: what improves, not which files moved.
+Keep the four path tables at the top of `templates/tools/hil_update.py` in step with `scripts/scaffold.py`.
 
 ## 9. Handoff and overnight
 

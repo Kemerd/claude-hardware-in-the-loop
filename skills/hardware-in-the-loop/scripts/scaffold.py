@@ -25,12 +25,15 @@
    4. writes harness/swarm/machine.env (CPU cap, RAM reserve, disk floor, handoff threshold, project name), creates
       .tmp/, docs/cad_decisions/, harness/swarm/resume_<today>/, and harness/swarm/PLAN.md from the plan template
       of the chosen mode;
-   5. prints what was written, kept and skipped, and the next commands (git init / branches, setup_tools, first CI).
+   5. stamps the project with the method version (harness/TEMPLATE_VERSION.json: VERSION, the options chosen and a hash of
+      every template file written) so tools/hil_update.py can later tell untouched files from customised ones;
+   6. prints what was written, kept and skipped, and the next commands (git init / branches, setup_tools, first CI).
  It never runs git, never touches anything outside --dest, and with --dry-run writes nothing at all.
 =======================================================================================================================
 """
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -93,6 +96,24 @@ SCHEMA = {
 }
 RANGES = {"cpu_max_pct": (10, 100), "ram_reserve_gb": (1, 512), "disk_free_min_gb": (1, 100000), "handoff_pct": (50, 101)}
 VAR_RE = re.compile(r"\{\{([A-Z_]+)\}\}")
+
+
+def file_sha(path):
+    """SHA-256 of a file with CRLF folded to LF (same rule as templates/tools/hil_update.py); None if unreadable."""
+    try:
+        with open(path, "rb") as fh:
+            return hashlib.sha256(fh.read().replace(b"\r\n", b"\n")).hexdigest()
+    except OSError:
+        return None
+
+
+def method_version():
+    """Contents of the skill's VERSION file ('0.0.0' if it is missing, so a stamp is still written)."""
+    try:
+        with open(os.path.join(SKILL, "VERSION"), "r", encoding="utf-8") as fh:
+            return fh.read().strip() or "0.0.0"
+    except OSError:
+        return "0.0.0"
 
 
 def fail(msg, code=2):
@@ -231,10 +252,12 @@ def main(argv=None):
     var = variables(a, today)
 
     written, kept, errors = [], [], []
+    tpl_src = {}          # destination path -> template file, for the version stamp
     # ---- 1. render everything first, so a template error writes nothing at all
     jobs = []
     for src, rel in plan_files(args.with_examples, a.get("sim_tiers", ""), a.get("cad_viewer", True)):
         target = os.path.join(dest, *rel.split("/"))
+        tpl_src[rel] = src
         if os.path.exists(target):
             kept.append(rel)
             continue
@@ -281,6 +304,21 @@ def main(argv=None):
             written.append(rel)
         for d in (".tmp", os.path.join("docs", "cad_decisions"), os.path.join("harness", "swarm", f"resume_{today}")):
             os.makedirs(os.path.join(dest, d), exist_ok=True)
+        # the version stamp: per template file the hash of the template (src) and of what is on disk now (out; None for a
+        # file that already existed, which counts as customised), so a later update never overwrites the project's edits
+        stamp_path = os.path.join(dest, "harness", "TEMPLATE_VERSION.json")
+        if not os.path.exists(stamp_path):
+            stamp = {"version": method_version(), "upstream": "Kemerd/claude-hardware-in-the-loop", "scaffolded": today,
+                     "options": {"with_examples": bool(args.with_examples), "sim_tiers": a.get("sim_tiers", ""),
+                                 "cad_viewer": a.get("cad_viewer", True)},
+                     "files": {rel: {"src": file_sha(tpl_src[rel]),
+                                     "out": file_sha(os.path.join(dest, *rel.split("/"))) if rel in written else None}
+                               for rel in sorted(tpl_src)},
+                     "pending_merge": []}
+            with open(stamp_path, "w", encoding="utf-8", newline="\n") as fh:
+                json.dump(stamp, fh, indent=2, sort_keys=True)
+                fh.write("\n")
+            written.append("harness/TEMPLATE_VERSION.json")
     else:
         written = [rel for _, rel, _, _ in jobs]
 

@@ -147,6 +147,10 @@ A layout that only satisfies the netlist works and can't be read. Open it and th
 
 **A table is not a finished board.** `"box": false` is for a group that is no real stage. It is not the way out for a dense board. If the check shows hundreds of strays, the placement is wrong: write the regions first, place from them, route. One 232-part board went from 473 strays to 0 that way, and from 4.4 m of copper to 2.74 m.
 
+**Box lines.** Dashed by default, 0.6 mm dashes on 1.0 mm gaps at the 0.15 mm stroke: a board this dense reads lighter with them, and a label can sit in a gap. They are real short segments, not KiCad's dashed line type, because that takes its proportions from the plot settings, so the editor, a render and the gerbers can each come out different. `"dash": 0` in the table draws solid; `"dash"` and `"gap"` set the size.
+
+Each box hugs its own parts, so two neighbours end up a fraction of a mm apart or a fraction past each other, which prints as a double line that means nothing. A pair that overlaps or stands under `share` (0.6 mm) apart gets one line: the middle of the difference, slid off pads and part bodies. Every part stays on its own side, so stages that really interleave keep their overlap and the report counts it. `"share": 0` turns it off.
+
 **Name and rev.** `"marks": [{"text": "BOARD A1", "face": "F", "x": 150, "y": 100, "h": 1.0}]` in the table, centre in sheet mm. `draw` writes them with the boxes, so titles and labels keep clear of them.
 
 **Title height.** The label placer writes the size it settled on into the project's minimum text height. A stage title smaller than the labels then fails DRC's text check: keep titles at or above label size.
