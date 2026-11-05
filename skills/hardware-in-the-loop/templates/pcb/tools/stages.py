@@ -10,7 +10,7 @@ things that don't fit ... FOLLOW THE RULE as much as you can, not NEVER deviate.
     python pcb/tools/stages.py draw  <board.kicad_pcb> [--table t.json]                  boxes and titles onto the board, replacing the ones drawn before
     python pcb/tools/stages.py check <board.kicad_pcb> [--table t.json] [--json out]     the report: exit 0 with warnings counted, 1 errors, 2 no table or a broken one
 
-Order of a board's last steps: place, route, `stages.py draw`, `place_labels.py`, `stages.py check`. Labels go last: boxes are drawn as four lines and titles as text, and fix_silkscreen treats
+Order of a board's last steps: place, route, `stages.py draw`, `place_labels.py`, `stages.py check`. Labels go last: boxes are drawn as four lines and titles as text, and place_labels treats
 both as obstacles. A closed rectangle would count as one solid block the size of the stage and push every label out of it, which is why this draws lines.
 
 The table, JSON, found beside the board as <board>.stages.json or stages.json, or stages.json one folder up (only the first three keys of a stage are required):
@@ -21,11 +21,17 @@ The table, JSON, found beside the board as <board>.stages.json or stages.json, o
                  "parts": ["U1", "Q1-Q4", "R7", "C?"],                                    exact refs, ranges, or globs
                  "kind": "real",                                                          real = a circuit with its own way in and out; partial = grouped, but forced in part, say why in "note"
                  "in": ["GATE_[AB]"], "out": ["DRV_[AB]"],                                full-match patterns over the nets of its parts; each must match, or the table is out of date
-                 "note": "...", "faces": "F", "box": false}]}                             faces that get a box (default both); box false = parts stay listed, no box (a stage that turned out a fiction)
+                 "note": "...", "faces": "F", "box": false,                               faces that get a box (default both); box false = parts stay listed, no box (a stage that turned out a fiction)
+                 "title_out": true,                                                       title against the outside of the box, not in it: the spot inside is worth more to the labels (small boards)
+                 "title_edge": "W"}]}                                                     of N, S, E, W on the sheet: the edge it stands against when outside, when another edge is the only home of the labels beside it
 
-Errors, exit 1: a name in the table that is not on the board, a part in two stages. Warnings, counted: a part in no stage, another stage's part inside a box, two boxes overlapping past overlap_ok mm
-(default 1.0: a shared edge or a small overlap is fine), a box off the board, a box line over a pad, a title with no room, an in or out that matches no net, a drawn box that no longer matches the parts.
-KiCad python, numpy for the title search. Nothing board-specific here.
+Errors, exit 1: a name in the table that is not on the board, a part in two stages. Warnings, counted: a part in no stage, a part of another stage with its middle inside a box, two boxes overlapping past overlap_ok mm
+(default 1.0: a shared edge or a small overlap is fine), a box off the board, a box line over a pad, no room for a title on any of its faces, a title that could not stand in or against its own box (title_far: the
+floorplan has to leave it room), an in or out that matches no net, a drawn box that no longer matches the parts.
+
+A title has to read as naming its own box and no other, so place_title takes the first of these that exists: inside at a corner, or against an edge as near a corner as the parts allow; outside against one edge of its
+box, touching distance, nearer to that box than to any other; inside anywhere; the closest free spot, flagged title_far.
+Interpreter: KiCad's bundled python (pcbnew, numpy); started again under it from plain python, HIL_KICAD_PY names it and HIL_KICAD_HOME optionally moves its settings folders. Nothing board-specific here.
 """
 from __future__ import annotations
 
@@ -39,9 +45,13 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GROUP = "stages"                         # KiCad group that holds everything this tool draws, so the next run can find it
-CELL = 0.1                               # mm, raster of the title search
+CELL = 0.05                              # mm, raster of the title search: it decides how close "touching" can come
 TITLE_RATIO = 0.8                        # letter width over height
-DEFAULTS = dict(grid=0.5, margin=0.2, line=0.15, title=1.0, title_stroke=0.15, title_gap=0.1, edge=0.2, overlap_ok=1.0)
+TITLE_REACH = 3.0                        # mm, furthest a title is looked for from its box
+TITLE_CLEAR = 0.3                        # mm, how much further from any other box than from its own: a title merely 0.01 nearer its own box still reads as heading the other one
+T_CORNER, T_EDGE, T_INSIDE, T_FAR = 0.0, 100.0, 200.0, 1000.0      # place_title's order of preference: each one beats everything after it
+T_ROT, T_ENDWAYS = 3.0, 8.0              # a title on its side; one that meets its edge with its short end, which reads as a word beside a box and not as the box's name
+DEFAULTS = dict(grid=0.5, margin=0.2, line=0.15, title=1.0, title_stroke=0.15, title_gap=0.05, title_pad=0.15, edge=0.2, overlap_ok=1.0)
 ERRORS = ("unknown", "twice")            # plainly broken; everything else is a count to bring down
 # Rails and ground are not a stage's inputs and outputs: they reach everything. A table can give its own pattern as "power"
 POWER = r"(GND.*|[AP]GND|\+.*|VCC.*|VDD.*|VBAT.*|VSYS|VBUS|VIN.*|\d+V\d*.*|-.*)"
@@ -140,6 +150,8 @@ def load_table(path):
                 raise ValueError("%s: a stage without %s: %r" % (path, k, s.get("name")))
         if s.get("kind", "real") not in ("real", "partial"):
             raise ValueError("%s: %s: kind must be real or partial" % (path, s["name"]))
+        if s.get("title_edge", "N") not in ("N", "S", "E", "W"):
+            raise ValueError("%s: %s: title_edge must be N, S, E or W" % (path, s["name"]))
     return t
 
 
@@ -166,9 +178,30 @@ def overlaps(a, b, tol=0.01):
     return min(a[2], b[2]) - max(a[0], b[0]) > tol and min(a[3], b[3]) - max(a[1], b[1]) > tol
 
 
+def within(p, b):
+    """A part stands in a box when its middle does: a courtyard the box line clips is a tight board, not a stray."""
+    x, y = (p[0] + p[2]) / 2, (p[1] + p[3]) / 2
+    return b[0] < x < b[2] and b[1] < y < b[3]
+
+
 def snap_out(box, g):
     """Grow a box out to the grid: round numbers, so neighbouring boxes come out in line."""
     return (math.floor(box[0] / g + 1e-6) * g, math.floor(box[1] / g + 1e-6) * g, math.ceil(box[2] / g - 1e-6) * g, math.ceil(box[3] / g - 1e-6) * g)
+
+
+def settle(b, inner, pads, half):
+    """A rounded edge that lands on a pad steps back toward the parts, 0.05 mm at a time, down to the courtyards: a line in the clear beats a round number."""
+    b = list(b)
+    for i, sign in ((0, -1.0), (1, -1.0), (2, 1.0), (3, 1.0)):
+        while (b[i] - inner[i]) * sign > 0.05:
+            ln = [b[0] - half, b[1] - half, b[2] + half, b[3] + half]
+            ln[(i + 2) % 4] = b[i] + half if sign > 0 else b[i] - half
+            ln[i] = b[i] - half if sign > 0 else b[i] + half
+            ln = (min(ln[0], ln[2]), min(ln[1], ln[3]), max(ln[0], ln[2]), max(ln[1], ln[3]))
+            if not any(overlaps(ln, q, 0.0) for _r, _n, q in pads):
+                break
+            b[i] = round(b[i] - sign * 0.05, 3)
+    return tuple(b)
 
 
 def box_lines(b):
@@ -177,10 +210,10 @@ def box_lines(b):
 
 
 def read_board(board):
-    """{ref: part} and the pad boxes of each face, sheet mm. A through pad counts on both."""
+    """{ref: part}, the pads of each face as (ref, number, box), sheet mm, and the boxes among them that are round. A through pad counts on both."""
     import pcbnew
     to = pcbnew.ToMM
-    parts, pads = {}, {"F": [], "B": []}
+    parts, pads, discs = {}, {"F": [], "B": []}, set()
     for fp in board.GetFootprints():
         face = "B" if fp.IsFlipped() else "F"
         nets = set()
@@ -188,6 +221,8 @@ def read_board(board):
             b = p.GetBoundingBox()
             q = (to(b.GetLeft()), to(b.GetTop()), to(b.GetRight()), to(b.GetBottom()))
             drilled = p.GetDrillSize().x > 0
+            if p.GetShape(pcbnew.F_Cu) == pcbnew.PAD_SHAPE_CIRCLE:
+                discs.add(q)
             for f, cu in (("F", pcbnew.F_Cu), ("B", pcbnew.B_Cu)):
                 if drilled or p.IsOnLayer(cu):
                     pads[f].append((fp.GetReference(), p.GetNumber(), q))
@@ -198,7 +233,7 @@ def read_board(board):
         cy = fp.GetCourtyard(pcbnew.B_CrtYd if face == "B" else pcbnew.F_CrtYd)
         b = cy.BBox() if cy.OutlineCount() else fp.GetBoundingBox(False, False)
         parts[fp.GetReference()] = dict(face=face, box=(to(b.GetLeft()), to(b.GetTop()), to(b.GetRight()), to(b.GetBottom())), nets=nets)
-    return parts, pads
+    return parts, pads, discs
 
 
 def outline(board):
@@ -233,6 +268,17 @@ class Raster:
         i0, j0, i1, j1 = self.idx(b)
         if i1 > i0 and j1 > j0:
             self.g[i0:i1, j0:j1] = True
+
+    def mark_disc(self, b):
+        """A round pad or hole. Marking its box would throw away the four corners, and a mounting hole's corners are where a title fits on a small board."""
+        np = self.np
+        i0, j0, i1, j1 = self.idx(b)
+        if i1 <= i0 or j1 <= j0:
+            return
+        cx, cy, rad = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2, (b[2] - b[0]) / 2 + 0.75 * CELL    # a cell's half diagonal over, so a cell the rim crosses always counts as taken
+        x = self.x0 + (np.arange(i0, i1) + 0.5) * CELL - cx
+        y = self.y0 + (np.arange(j0, j1) + 0.5) * CELL - cy
+        self.g[i0:i1, j0:j1] |= x[:, None] ** 2 + y[None, :] ** 2 <= rad * rad
 
     def mark_outside(self, sps, inset):
         """Everything past the outline, by a crossing test over the outer ring, then grown by the edge clearance."""
@@ -276,49 +322,84 @@ def make_title(board, s, face, cfg):
     return t
 
 
-def place_title(board, r, st, face, box, boxes, cfg):
-    """Where the title goes: inside its box along the edge a reader starts from, else any free spot inside, else just outside and in nobody else's box. None when there is no room."""
+def letters_wide(t):
+    """Width of a text's letters, mm. KiCad's own box adds a margin past each end, 0.27 mm on a 1.5 mm word, and a title on a small board needs that room."""
     import pcbnew
+    ink = pcbnew.SHAPE_POLY_SET()
+    t.TransformTextToPolySet(ink, 0, pcbnew.FromMM(0.005), pcbnew.ERROR_INSIDE)
+    return pcbnew.ToMM(ink.BBox().GetWidth())
+
+
+def gap_to(np, X, Y, a, b, box):
+    """Gap, mm, from every a x b spot with its corner at (X, Y) to a box: 0 where they touch or overlap."""
+    return np.hypot(np.maximum(np.maximum(box[0] - X - a, X - box[2]), 0.0), np.maximum(np.maximum(box[1] - Y - b, Y - box[3]), 0.0))
+
+
+def place_title(board, r, st, face, box, boxes, cfg):
+    """Where a stage's title goes on this face. The letters are measured here, the spot is found by title_spot."""
     t = make_title(board, st["name"], face, cfg)
-    bb = t.GetBoundingBox()
-    w, h = pcbnew.ToMM(bb.GetWidth()) + 2 * cfg["title_gap"], pcbnew.ToMM(bb.GetHeight()) + 2 * cfg["title_gap"]
+    # the height is the letters too: KiCad's box adds a line's spacing above them
+    wide, tall = letters_wide(t) + 2 * cfg["title_gap"], cfg["title"] + cfg["title_stroke"] + 2 * cfg["title_gap"]
+    return title_spot(r, wide, tall, face, box, boxes, cfg["line"], bool(st.get("title_out")), st.get("title_edge", ""))
+
+
+def title_spot(r, wide, tall, face, box, boxes, line, title_out=False, edge=""):
+    """The best free spot of wide x tall mm for a title, in the order at the head of this file. Returns None when nothing is free within reach of the box; a spot that breaks the rule comes back
+    with far set, for the report."""
     np = r.np
+    touch = line / 2 + 2 * CELL              # half the line, and the raster's rounding on each side of it: nothing can stand in a gap this small
     best = None
-    for ang, (a, b) in ((0, (w, h)), (90, (h, w))):
+    for ang, (a, b) in ((0, (wide, tall)), (90, (tall, wide))):
         free = r.free_spots(a, b)
         if free is None:
             continue
-        xs = r.x0 + np.arange(free.shape[0]) * CELL
-        ys = r.y0 + np.arange(free.shape[1]) * CELL
-        X, Y = np.meshgrid(xs, ys, indexing="ij")
-        inner = (X >= box[0]) & (X + a <= box[2]) & (Y >= box[1]) & (Y + b <= box[3])
-        # reading starts at the top left, which on a mirrored face is the top right of the sheet
-        along = (X - box[0]) if face == "F" else (box[2] - X - a)
-        cost = np.where(inner, along * 0.2 + (Y - box[1]) * 2.0, 1e9) + (3.0 if ang else 0.0)
-        reach = (X + a > box[0] - 3.0) & (X < box[2] + 3.0) & (Y + b > box[1] - 3.0) & (Y < box[3] + 3.0)
-        outer = reach & ~inner
-        for o in boxes:              # no title of this stage inside somebody else's box, nor across this one's lines
-            outer &= (X + a <= o[0]) | (X >= o[2]) | (Y + b <= o[1]) | (Y >= o[3])
-        cost = np.where(outer, 200.0 + np.abs(Y + b - box[1]) * 2.0 + np.abs(along) * 0.2, cost)
+        X, Y = np.meshgrid(r.x0 + np.arange(free.shape[0]) * CELL, r.y0 + np.arange(free.shape[1]) * CELL, indexing="ij")
+        # how far each spot stands in from the box's nearer sides: both positive = inside
+        in_x, in_y = np.minimum(X - box[0], box[2] - X - a), np.minimum(Y - box[1], box[3] - Y - b)
+        inside = (in_x >= 0) & (in_y >= 0)
+        own = gap_to(np, X, Y, a, b, box)
+        other = np.full(X.shape, 1e9)
+        for o in boxes:
+            other = np.minimum(other, gap_to(np, X, Y, a, b, o))
+        # reading starts at the top left, which on a mirrored face is the top right of the sheet. A small price, it only breaks ties
+        start = (X - box[0]) if face == "F" else (box[2] - X - a)
+        tie = 0.02 * start + 0.02 * (Y - box[1]) + (T_ROT if ang else 0.0)
+        in_ok = inside & (other > 0) & (not title_out)
+        # ---- inside: a corner is worth nothing, sliding off it along the edge costs its distance ----
+        hug = in_ok & (np.minimum(in_x, in_y) <= touch)
+        slide = np.maximum(in_x - touch, 0.0) + np.maximum(in_y - touch, 0.0)
+        cost = np.where(hug, T_CORNER + slide + tie, 1e9)
+        # ---- outside: against exactly one edge, the title's span over that edge, and no other box as near ----
+        over_x, over_y = (X < box[2]) & (X + a > box[0]), (Y < box[3]) & (Y + b > box[1])
+        beside = ~inside & (own <= touch) & (over_x != over_y) & (other >= own + TITLE_CLEAR)
+        if edge:
+            beside &= {"N": Y + b <= box[1] + touch, "S": Y >= box[3] - touch, "W": X + a <= box[0] + touch, "E": X >= box[2] - touch}[edge]
+        past = np.where(over_x, np.maximum(np.maximum(box[0] - X, X + a - box[2]), 0.0), np.maximum(np.maximum(box[1] - Y, Y + b - box[3]), 0.0))
+        along = over_x if ang == 0 else over_y          # the title's long side lies on the edge it stands against
+        cost = np.where(beside, T_EDGE + 2.0 * past + 2.0 * np.maximum(1.0 - other, 0.0) + tie + np.where(over_x & (Y < box[1]), 0.0, 0.5) + np.where(along, 0.0, T_ENDWAYS), cost)
+        # ---- what is left: floating inside still names the right box, a far spot does not ----
+        cost = np.where(in_ok & ~hug, T_INSIDE + slide + tie, cost)
+        far = ~inside & ~beside & (other > 0) & (own <= TITLE_REACH)
+        cost = np.where(far, T_FAR + 10.0 * own + tie + np.where(other > own, 0.0, 100.0), cost)      # past that, at least not nearer to a box it does not name
         cost = np.where(free, cost, 1e9)
         i, j = np.unravel_index(int(np.argmin(cost)), cost.shape)
         if cost[i, j] < 1e8 and (best is None or cost[i, j] < best[0]):
-            best = (float(cost[i, j]), float(X[i, j]), float(Y[i, j]), a, b, ang)
+            best = (float(cost[i, j]), float(X[i, j]), float(Y[i, j]), a, b, ang, float(own[i, j]))
     if best is None:
         return None
-    _c, x, y, a, b, ang = best
+    c, x, y, a, b, ang, own_gap = best
     r.mark((x, y, x + a, y + b))
-    return dict(x=round(x + a / 2, 3), y=round(y + b / 2, 3), angle=ang, box=(x, y, x + a, y + b))
+    return dict(x=round(x + a / 2, 3), y=round(y + b / 2, 3), angle=ang, box=(x, y, x + a, y + b), far=c >= T_FAR, gap=round(own_gap, 2))
 
 
 # ---- the stages on a board -------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 def layout(board, table):
     """Boxes, titles and the problems of a board against its table. Changes nothing on the board."""
     cfg = {k: float(table.get(k, v)) for k, v in DEFAULTS.items()}
-    parts, pads = read_board(board)
+    parts, pads, discs = read_board(board)
     refs = list(parts)
     power = re.compile(table.get("power", POWER))
-    bad = dict(unknown=[], twice=[], no_stage=[], stray=[], overlap=[], off_board=[], line_on_pad=[], no_title=[], bad_io=[], stale=[])
+    bad = dict(unknown=[], twice=[], no_stage=[], stray=[], overlap=[], off_board=[], line_on_pad=[], no_title=[], title_far=[], bad_io=[], stale=[])
     owner, stages = {}, []
     excused = table.get("exceptions", {})
     bad["unknown"] += ["exceptions: " + r for r in excused if r not in parts]
@@ -330,7 +411,7 @@ def layout(board, table):
             if r in owner and owner[r] != st["name"]:
                 bad["twice"].append("%s in %s and %s" % (r, owner[r], st["name"]))
             owner[r] = st["name"]
-        stages.append(dict(name=st["name"], kind=st.get("kind", "real"), job=st["job"], parts=sorted(set(got)), boxes={}, titles={}))
+        stages.append(dict(name=st["name"], kind=st.get("kind", "real"), job=st["job"], parts=sorted(set(got)), boxes={}, titles={}, title_out=st.get("title_out", False), title_edge=st.get("title_edge", "")))
     bad["no_stage"] = sorted(r for r in refs if r not in owner and r not in excused)
     # ---- a stage's in and out must be nets its parts really touch ----
     nets_of = {}
@@ -350,7 +431,8 @@ def layout(board, table):
     # ---- boxes come from the parts ----
     sps, edge = outline(board)
     g, m, ei = cfg["grid"], cfg["margin"], cfg["edge"]
-    lim = (math.ceil((edge[0] + ei) / g) * g, math.ceil((edge[1] + ei) / g) * g, math.floor((edge[2] - ei) / g) * g, math.floor((edge[3] - ei) / g) * g)
+    inset = ei + cfg["line"] / 2         # edge is what stands between the board edge and the line, not its centre: a line 0.1 mm in has half of itself left and clips the outline
+    lim = (round(edge[0] + inset, 2), round(edge[1] + inset, 2), round(edge[2] - inset, 2), round(edge[3] - inset, 2))
     for st, s in zip(table["stages"], stages):
         if st.get("box", True) is False:
             continue
@@ -358,14 +440,16 @@ def layout(board, table):
             mem = [parts[r]["box"] for r in s["parts"] if parts[r]["face"] == face and r not in excused]
             if not mem:
                 continue
-            b = snap_out((min(q[0] for q in mem) - m, min(q[1] for q in mem) - m, max(q[2] for q in mem) + m, max(q[3] for q in mem) + m), g)
-            s["boxes"][face] = (max(b[0], lim[0]), max(b[1], lim[1]), min(b[2], lim[2]), min(b[3], lim[3]))
+            inner = (min(q[0] for q in mem), min(q[1] for q in mem), max(q[2] for q in mem), max(q[3] for q in mem))
+            b = snap_out((inner[0] - m, inner[1] - m, inner[2] + m, inner[3] + m), g)
+            b = (max(b[0], lim[0]), max(b[1], lim[1]), min(b[2], lim[2]), min(b[3], lim[3]))
+            s["boxes"][face] = settle(b, inner, pads[face], cfg["line"] / 2)
     # ---- what a box may not do ----
     import pcbnew
     for s in stages:
         mine = set(s["parts"])
         for face, b in s["boxes"].items():
-            bad["stray"] += ["%s %s: %s" % (s["name"], face, r) for r, p in parts.items() if r not in mine and r not in excused and p["face"] == face and overlaps(b, p["box"], 0.02)]
+            bad["stray"] += ["%s %s: %s" % (s["name"], face, r) for r, p in parts.items() if r not in mine and r not in excused and p["face"] == face and within(p["box"], b)]
             for x0, y0, x1, y1 in box_lines(b):
                 t = cfg["line"] / 2
                 ln = (min(x0, x1) - t, min(y0, y1) - t, max(x0, x1) + t, max(y0, y1) + t)
@@ -383,12 +467,12 @@ def layout(board, table):
         ras = Raster((edge[0] - 0.5, edge[1] - 0.5, edge[2] + 0.5, edge[3] + 0.5))
         if sps is not None:
             ras.mark_outside(sps, ei)
-        gap = cfg["title_gap"]
+        gap = max(cfg["title_pad"] - cfg["title_gap"], 0.0)       # the title's own size already holds title_gap: together they make the fab's pad gap, not twice it
         for p in parts.values():
             if p["face"] == face:
                 ras.mark(p["box"])
         for _r, _n, q in pads[face]:
-            ras.mark((q[0] - gap, q[1] - gap, q[2] + gap, q[3] + gap))
+            (ras.mark_disc if q in discs else ras.mark)((q[0] - gap, q[1] - gap, q[2] + gap, q[3] + gap))
         for s in stages:
             if face in s["boxes"]:
                 for x0, y0, x1, y1 in box_lines(s["boxes"][face]):
@@ -397,11 +481,13 @@ def layout(board, table):
         for s in stages:
             if face in s["boxes"]:
                 others = [o["boxes"][face] for o in stages if o is not s and face in o["boxes"]]
-                got = place_title(board, ras, {"name": s["name"]}, face, s["boxes"][face], others, cfg)
-                if got is None:
-                    bad["no_title"].append("%s %s" % (s["name"], face))
-                else:
+                got = place_title(board, ras, s, face, s["boxes"][face], others, cfg)
+                if got is not None:
                     s["titles"][face] = got
+                    if got["far"]:
+                        bad["title_far"].append("%s %s: %.1f mm from its box" % (s["name"], face, got["gap"]))
+    # ---- a stage boxed on both faces needs its title on one of them ----
+    bad["no_title"] = [s["name"] for s in stages if s["boxes"] and not s["titles"]]
     return dict(cfg=cfg, stages=stages, problems=bad, parts=len(parts), excused=len(excused))
 
 

@@ -102,10 +102,13 @@ they are made to look tidy rather than removed.
 - **A script places them.** `pcb/tools/place_labels.py <board.kicad_pcb>` runs at the end of a board, after routing, and
   the final DRC gate fails on `silk_overlap`, `silk_over_copper` and `silk_edge_clearance` by name. The placer
   (`silk_solver.py`, numpy only) tries every free spot around each part, in both rotations, and keeps each label as near
-  its part as the neighbours allow.
+  its part as the neighbours allow. It measures the letters, not KiCad's taller text box, so a label fits a gap it
+  really fits; with no leader line, a label that would stand nearer another part than its own pays extra. Stage titles
+  are kept a word space (0.25 mm) off.
 - **One size per board, the largest that fits.** Stroke is fixed at 0.17 mm, letters are 0.7 of their height wide, and
   the height is the largest of 1.0 .. 0.6 mm that leaves no overlap (found by bisection). A roomy board keeps big text, a
-  dense one shrinks. The project's `min_text_height` follows. Under 0.8 mm text may print soft: check the fab's preview.
+  dense one shrinks; a smaller size is only taken when the larger one leaves labels far from their parts and the smaller
+  brings the total distance clearly down. The project's `min_text_height` follows. Under 0.8 mm text may print soft: check the fab's preview.
 - **Never move a label off silk to pass a check.** That is removing the label, not fixing the overlap (lesson 45).
 - **No model looks at a board for this.** The script measures; a person (or the DRC) judges the result. Nothing here
   spends tokens on screenshots.
@@ -137,7 +140,9 @@ A layout that only satisfies the netlist works and can't be read. Open it and th
 
 **Stage review, required on every board.** An agent may get a first pass down however it can, to learn what fits. That first pass does not get routed or landed until it has been reviewed against the stages: a separate reviewer, not the author, renders both faces and asks of every part: is it in a stage, could it move into one, and can a stray group become a real stage or go inside one? The reviewer returns a list of moves or says why a part can't move, the author applies them, and only then does the board route. A dump that was never reviewed is not a finished board.
 
-`python pcb/tools/stages.py check <board>` reports and does not block. Errors are only a table naming a part that isn't on the board, or a part in two stages. Everything else is a counted warning: a part in no stage, strays, boxes overlapping past `overlap_ok` (1.0 mm by default), no room for a title. `"exceptions"` and `"box": false` cover the parts and groups that don't fit. Render both faces and read them: if you can't say what a region does, the stage isn't done.
+`python pcb/tools/stages.py check <board>` reports and does not block. Errors are only a table naming a part that isn't on the board, or a part in two stages. Everything else is a counted warning: a part in no stage, strays (a part whose middle stands in another stage's box), boxes overlapping past `overlap_ok` (1.0 mm by default), no room for a title, a title that had to stand far from its box (`title_far`). A title is placed inside at a corner, else against one edge outside and nearer its own box than any other. `"exceptions"` and `"box": false` cover the parts and groups that don't fit. Render both faces and read them: if you can't say what a region does, the stage isn't done.
+
+Tips from the first boards. On a small board use `"grid": 0.1` and `"margin": 0` and keep titles to four or five letters. `"title_out": true` puts a stage's title against the outside of its box, worth it when the room inside is worth more to the labels, and `"title_edge"` (N, S, E or W) picks which edge it stands against. Merge landing pads and laps into the stage they feed. Leave label room in the floorplan: if the labels fight you, the floorplan is short of room.
 
 ## 3. Freerouting setup and flags
 

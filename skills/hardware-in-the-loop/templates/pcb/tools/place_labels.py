@@ -17,7 +17,14 @@
    * Every reference designator (R1, C2, U3 ...) stays on F.SilkS / B.SilkS, centred, mirrored on the bottom face.
    * Stroke is fixed at LABEL_STROKE_MM, letters are LABEL_WIDTH_RATIO of their height wide.
    * The height is the largest of LABEL_HEIGHTS_MM at which silk_solver.py finds a place for every label with no
-     overlap (bisection over the sizes, a few shuffled seeds per size). A roomy board keeps big text, a dense one shrinks.
+     overlap (bisection over the sizes; the solver tries its own repair orders per size). A roomy board keeps big text,
+     a dense one shrinks. Only when the largest fit leaves a label far from its part (NEAR_COST) do smaller sizes get
+     a say, and then only for a clear gain (SMALLER_GAIN). Once the size is settled one more run at it polishes the
+     answer: more orders, the cheapest kept.
+   * Letters are measured by their ink (text_ink), not KiCad's text box, which adds a line's spacing above them and a
+     margin past each end. Labels still keep the full box from each other, since a design-rule check reads that one.
+   * Large round pads and holes are cut into slices (pad_keepout) so a label may use the corners of their square; a fab
+     outline that stands past the part is clipped to the courtyard.
    * A board-only footprint (a mounting hole, a fiducial) gets no label.
    * The project's min_text_height follows the size used, so KiCad's own DRC judges the board at what it was built to.
    * One line is printed per height tried; the exit code is nonzero when overlaps remain at the smallest size.
@@ -83,7 +90,9 @@ LABEL_HEIGHTS_MM = (1.0, 0.9, 0.8, 0.75, 0.7, 0.65, 0.6)
 LABEL_WIDTH_RATIO = 0.7                                     # letter width to height: narrower letters saved more room than a cleverer search
 PAD_GAP_MM = 0.15                                           # label to exposed copper
 EDGE_INSET_MM = 0.35                                        # label to board edge
-SEEDS = (1, 2, 3, 4)                                        # repair order is shuffled per seed; a few leftovers often vanish on another shuffle
+TEXT_GAP_MM = 0.25                                          # label to other silk text (a stage title): about a word space, closer and the two read as one word
+NEAR_COST = 300.0                                           # solver cost of a label about 5 mm from its part. Only a label past this lets a smaller size compete: below it the largest size that fits stands
+SMALLER_GAIN = 0.75                                         # a smaller size must bring the labels' total cost down to this share of the larger one's to win
 BODY_MAX_FRACTION = 0.65                                    # an outline spanning most of the board is a frame, not a body
 MM_SCALE = 1e6
 
@@ -113,6 +122,31 @@ def grow(b: tuple, g: float) -> tuple[float, float, float, float]:
 def touches(a: tuple, b: tuple, g: float = 0.0) -> bool:
     """True when box a, grown by g, intersects box b."""
     return a[0] - g < b[2] and a[2] + g > b[0] and a[1] - g < b[3] and a[3] + g > b[1]
+
+
+def text_ink(item: Any) -> tuple[float, float, float, float]:
+    """The letters of a text, stroke included, in millimetres. GetBoundingBox() adds a line's spacing above them and a
+    margin past each end; fitting that box instead of the letters shuts labels out of gaps they stand in with room to
+    spare. Falls back to the KiCad box when the text yields no outline."""
+    ink = pcbnew.SHAPE_POLY_SET()
+    item.TransformTextToPolySet(ink, 0, mm(0.005), pcbnew.ERROR_INSIDE)
+    return box_mm(ink.BBox()) if ink.OutlineCount() else box_mm(item.GetBoundingBox())
+
+
+def pad_keepout(pad: Any, bb: tuple) -> list[tuple[float, float, float, float]]:
+    """Boxes a pad or hole takes. A large round one comes as a stack of slices, so a label can use the corners of its
+    square: a mounting hole on a small board is the largest thing on it."""
+    dia = bb[2] - bb[0]
+    if pad.GetShape(pcbnew.F_Cu) != pcbnew.PAD_SHAPE_CIRCLE or dia < 1.0:
+        return [bb]
+    rad, cx, cy = dia / 2, (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2
+    out = []
+    for k in range(8):
+        a, b = -rad + dia * k / 8, -rad + dia * (k + 1) / 8
+        near = 0.0 if a < 0.0 < b else min(abs(a), abs(b))          # a slice is as wide as the disc at its widest row
+        half = math.sqrt(max(rad * rad - near * near, 0.0))
+        out.append((cx - half, cy + a, cx + half, cy + b))
+    return out
 
 
 def poly_of(sps: Any) -> Any:
@@ -181,7 +215,7 @@ def side_obstacles(board: Any, side: str) -> tuple[list, list, list, list]:
         if d.GetLayer() != silk_l:
             continue
         if isinstance(d, pcbnew.PCB_TEXT):
-            texts.append(box_mm(d.GetBoundingBox()))
+            texts.append(text_ink(d))
         elif isinstance(d, pcbnew.PCB_SHAPE):
             shapes.append(box_mm(d.GetBoundingBox()))
     for fp in board.GetFootprints():
@@ -193,7 +227,7 @@ def side_obstacles(board: Any, side: str) -> tuple[list, list, list, list]:
                 own.append(pb)
             if pad.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH) or pad.GetDrillSize().x > 0 \
                     or pad.IsOnLayer(mask_l) or pad.IsOnLayer(cu_l):
-                pads.append(pb)
+                pads.extend(pad_keepout(pad, pb))
         if not on_side:
             continue
         pos = (to_mm(fp.GetPosition().x), to_mm(fp.GetPosition().y))
@@ -205,13 +239,20 @@ def side_obstacles(board: Any, side: str) -> tuple[list, list, list, list]:
         for gi in fp.GraphicalItems():
             lay = gi.GetLayer()
             if isinstance(gi, pcbnew.PCB_TEXT) and lay == silk_l and gi.IsVisible():
-                texts.append(box_mm(gi.GetBoundingBox()))
+                texts.append(text_ink(gi))
             elif isinstance(gi, pcbnew.PCB_SHAPE):
                 gb = box_mm(gi.GetBoundingBox())
                 if lay == silk_l:
                     shapes.append(gb)
                 elif lay == fab_l and (gb[2] - gb[0]) < bw * BODY_MAX_FRACTION and (gb[3] - gb[1]) < bh * BODY_MAX_FRACTION:
                     x0, y0, x1, y1 = min(x0, gb[0]), min(y0, gb[1]), max(x1, gb[2]), max(y1, gb[3])
+        # a fab outline can stand past the part (a QFN drawn as a cross); the courtyard is the most room a part can
+        # claim and its pads the least, so the body is clipped between the two
+        court = fp.GetCourtyard(pcbnew.B_CrtYd if is_b else pcbnew.F_CrtYd)
+        if court.OutlineCount() and own:
+            cb = box_mm(court.BBox())
+            x0, y0 = max(x0, min(cb[0], min(b[0] for b in own))), max(y0, min(cb[1], min(b[1] for b in own)))
+            x1, y1 = min(x1, max(cb[2], max(b[2] for b in own))), min(y1, max(cb[3], max(b[3] for b in own)))
         if (x1 - x0) < bw * BODY_MAX_FRACTION and (y1 - y0) < bh * BODY_MAX_FRACTION:
             bodies.append((fp.GetReference(), (x0, y0, x1, y1)))
     return pads, bodies, texts, shapes
@@ -242,15 +283,15 @@ def style_labels(board: Any, height: float) -> None:
             ref.SetVisible(False)
 
 
-def place_all(board: Any, height: float, outside: Any, bounds: tuple) -> dict:
+def place_all(board: Any, height: float, outside: Any, bounds: tuple, polish: bool = False) -> dict:
     """Every label of the board at one size, through silk_solver. Writes the positions onto the board."""
     style_labels(board, height)
-    res: dict[str, Any] = dict(height=height, left=0, no_slot=[], slanted=0)
+    res: dict[str, Any] = dict(height=height, left=0, no_slot=[], slanted=0, gaps=[])
     for side in ("F", "B"):
         is_b = side == "B"
         pads, bodies, texts, shapes = side_obstacles(board, side)
         hard = [grow(b, PAD_GAP_MM) for b in pads] + [grow(b, 0.02) for _r, b in bodies] \
-            + [grow(b, 0.05) for b in texts] + [grow(b, 0.03) for b in shapes]
+            + [grow(b, TEXT_GAP_MM) for b in texts] + [grow(b, 0.03) for b in shapes]
         # a via under a letter is only a dimple: a small price, not a wall
         soft = []
         for trk in board.GetTracks():
@@ -265,11 +306,14 @@ def place_all(board: Any, height: float, outside: Any, bounds: tuple) -> dict:
             if fp.IsFlipped() != is_b or not fp.Reference().IsVisible():
                 continue
             ref = fp.Reference()
-            # the text box is measured at both angles on the board: the angle turns with the footprint
+            # the text is measured at both angles on the board (the angle turns with the footprint), box and letters;
+            # the solver gets the letters relative to the label's position, as they do not sit in the middle of the box
+            at = (to_mm(ref.GetPosition().x), to_mm(ref.GetPosition().y))
+            from_pos = lambda q: (q[0] - at[0], q[1] - at[1], q[2] - at[0], q[3] - at[1])
             ref.SetTextAngleDegrees(0.0)
-            b0 = ref.GetBoundingBox()
+            b0, ink0 = ref.GetBoundingBox(), from_pos(text_ink(ref))
             ref.SetTextAngleDegrees(-90.0 if is_b else 90.0)
-            b90 = ref.GetBoundingBox()
+            b90, ink90 = ref.GetBoundingBox(), from_pos(text_ink(ref))
             pbs = [box_mm(q.GetBoundingBox()) for q in fp.Pads()]
             pos = (to_mm(fp.GetPosition().x), to_mm(fp.GetPosition().y))
             pbox = (min(q[0] for q in pbs), min(q[1] for q in pbs), max(q[2] for q in pbs), max(q[3] for q in pbs)) \
@@ -279,22 +323,17 @@ def place_all(board: Any, height: float, outside: Any, bounds: tuple) -> dict:
                 pbox = (min(pbox[0], bd[0]), min(pbox[1], bd[1]), max(pbox[2], bd[2]), max(pbox[3], bd[3]))
             w0, h0, w90, h90 = to_mm(b0.GetWidth()), to_mm(b0.GetHeight()), to_mm(b90.GetWidth()), to_mm(b90.GetHeight())
             labels.append(dict(ref=fp.GetReference(), box=pbox, w0=w0, h0=h0, w90=w90, h90=h90,
-                               w=max(w0, h0), h=min(w0, h0), chars=len(fp.GetReference())))
+                               w=max(w0, h0), h=min(w0, h0), chars=len(fp.GetReference()), ink0=ink0, ink90=ink90))
             by_ref[fp.GetReference()] = fp
-        out = sls.solve_side(labels, grid, bounds)
-        for seed in SEEDS[1:]:
-            if out["left"] == 0:
-                break
-            again = sls.solve_side(labels, grid, bounds, seed=seed)
-            if again["left"] < out["left"]:
-                out = again
+        out = sls.solve_side(labels, grid, bounds, polish=polish)      # the solver tries its repair orders itself
         res["left"] += out["left"]
         res["no_slot"] += out["no_slot"]
         res["slanted"] += out["slanted"]
-        for name, (_cost, cx, cy, ang) in out["chosen"].items():
+        for name, (cost, cx, cy, ang) in out["chosen"].items():
             ref = by_ref[name].Reference()
             ref.SetTextAngleDegrees(-ang if is_b else ang)
             ref.SetPosition(pcbnew.VECTOR2I(mm(cx), mm(cy)))
+            res["gaps"].append(cost)
     return res
 
 
@@ -314,8 +353,10 @@ def audit(board: Any) -> dict[str, int]:
             r = fp.Reference()
             if fp.IsFlipped() != is_b or not r.IsVisible() or r.GetLayer() != silk:
                 continue
-            refs.append((fp.GetReference(), box_mm(r.GetBoundingBox())))
-        for i, (name, rb) in enumerate(refs):
+            # KiCad's box against other labels, because a rule check reads it; against copper and the edge only the
+            # letters print, and the box stands past them by up to 0.2 mm
+            refs.append((fp.GetReference(), box_mm(r.GetBoundingBox()), text_ink(r)))
+        for i, (name, fb, rb) in enumerate(refs):
             if not (rb[0] >= safe_box[0] - 1e-4 and rb[1] >= safe_box[1] - 1e-4 and rb[2] <= safe_box[2] + 1e-4
                     and rb[3] <= safe_box[3] + 1e-4 and safe.contains(box(*rb))):
                 n["label_edge"] += 1
@@ -323,8 +364,8 @@ def audit(board: Any) -> dict[str, int]:
                 n["label_pad"] += 1
             if any(own != name and touches(rb, b) for own, b in bodies):
                 n["label_body"] += 1
-            n["label_label"] += sum(1 for _o, ob in refs[i + 1:] if touches(rb, ob, 0.06))
-            n["label_label"] += sum(1 for t in texts if touches(rb, t, 0.06))
+            n["label_label"] += sum(1 for _o, ob, _k in refs[i + 1:] if touches(fb, ob, 0.06))
+            n["label_label"] += sum(1 for t in texts if touches(rb, t, 0.06))   # a title is ink too, and is kept TEXT_GAP_MM off
     n["total"] = sum(n.values())
     return n
 
@@ -359,13 +400,13 @@ def place_labels(pcb_path: str) -> int:
     outside = outside_grid(safe_outline(board), bounds)
     name = os.path.basename(pcb_path)
 
-    def trial(height: float) -> dict:
+    def trial(height: float, polish: bool = False) -> dict:
         """A fresh copy of the board at this height."""
         b = pcbnew.LoadBoard(pcb_path)
-        r = place_all(b, height, outside, bounds)
+        r = place_all(b, height, outside, bounds, polish)
         r["board"] = b
         print(f"  {name} at {height} mm: {r['left']} overlap cells, {len(r['no_slot'])} labels with no slot, "
-              f"{r['slanted']} slanted", flush=True)
+              f"{r['slanted']} slanted, cost {sum(r['gaps']):.0f}, worst {max(r['gaps'], default=0.0):.0f}", flush=True)
         return r
 
     # bisection: sizes run large to small and fitting is monotone enough that the first fit from the left is the answer
@@ -379,6 +420,16 @@ def place_labels(pcb_path: str) -> int:
             lo = mid + 1
     if best is None:
         best = trial(LABEL_HEIGHTS_MM[-1])
+    # clearing is not all of it: with no leader line a label far from its part names nothing, so when the largest
+    # size that clears has labels far out, the smaller sizes get a say. A roomy board never reaches this step.
+    for height in LABEL_HEIGHTS_MM[LABEL_HEIGHTS_MM.index(best["height"]) + 1:]:
+        if best["left"] or max(best["gaps"], default=0.0) <= NEAR_COST:
+            break
+        r = trial(height)
+        if r["left"] == 0 and not r["no_slot"] and sum(r["gaps"]) < SMALLER_GAIN * sum(best["gaps"]):
+            best = r
+    if best["left"] == 0 and not best["no_slot"]:
+        best = trial(best["height"], polish=True)           # the size is settled: now the best answer at it
     if not pcbnew.SaveBoard(pcb_path, best["board"]):
         print(f"place_labels: SaveBoard failed for {pcb_path}")
         return 2
