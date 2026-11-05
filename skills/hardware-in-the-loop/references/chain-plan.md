@@ -1,6 +1,6 @@
-# {{PROJECT_NAME}}: chain plan (one lead, one subagent at a time)
+# {{PROJECT_NAME}}: chain plan (one lead, one or two subagents at a time)
 
-Mode: chain. Started {{DATE}}. One long lead session owns the plan and the decisions. It hands one bounded card at a time to one subagent, waits for the report, checks it, and goes to the next card. Long machine jobs (builds, CI, routing, renders, sims) run detached (`bash harness/swarm/detach.sh <chain.sh> <log>`) with a watcher (`bash harness/swarm/watch.sh <log>` as a background task).
+Mode: chain. Started {{DATE}}. One long lead session owns the plan and the decisions. It hands bounded cards to one or two subagents at a time, takes each report, checks it, and goes on. Long machine jobs (builds, CI, routing, renders, sims) run detached (`bash harness/swarm/detach.sh <chain.sh> <log>`) with a watcher (`bash harness/swarm/watch.sh <log>` as a background task).
 
 Why this works: the file dumps, build logs and trial and error stay in the subagent's context, and the lead keeps only the conclusion. The lead's context stays small enough to hold the whole project for days.
 
@@ -10,7 +10,7 @@ If the session has to stop, it appends a "## Where I stopped" section to THIS fi
 
 `harness/swarm/AGENT_RULES.md` (binding), `CODING_RULES.md`, `REQUIREMENTS.md`. Machine limits: CPU cap {{CPU_MAX}} %, {{RAM_RESERVE_GB}} GB RAM kept free, {{DISK_FREE_MIN_GB}} GB disk floor. Land on dev after every card (`merge_to_dev.sh`), promote dev to main when CI is green.
 
-- **One subagent at a time.** The lead may work on something else that touches other files while it runs. A second subagent waits, unless the owner says otherwise.
+- **One or two subagents at a time.** Start a second only when the two cards touch different files and will not both need the heavy machine slots. Do not start one just because you can: the lead has to read and check every report. The lead may work on files no card touches meanwhile.
 - **A card is bounded.** One outcome, the files to read, the acceptance numbers, what to leave alone, a report file. If you cannot write the brief, the lead does not understand the task yet.
 - **A fresh agent per card.** Never wake an old agent with a large context to ask it a small thing.
 - **Lead model:** Fable or Opus. **Subagent model:** Opus for subtle or hard cards, Sonnet for mechanical ones, chosen per card.

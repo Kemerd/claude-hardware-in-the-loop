@@ -3,7 +3,7 @@
 > **Cost first.** A swarm day on the project this method comes from burned **4-5 million tokens**. Most of it was not
 > the work itself: it was waking lane agents that each carried 300-800k tokens of context, again and again, to read a
 > message, check a log or answer a question. After that day the owner cancelled swarms, and the default became a **chain**:
-> one long lead session that hands one bounded card at a time to one subagent and waits for the report (section 6). Use
+> one long lead session that hands bounded cards to one or two subagents at a time and checks each report (section 6). Use
 > the swarm when wall-clock time matters more than tokens and the work splits into lanes that rarely need each other.
 
 ## 1. Roles and models
@@ -106,7 +106,7 @@ list of morning questions with context, options, the recommended default and wha
 
 ## 6. The chain (the default)
 
-One long lead session, one subagent at a time. A subagent run in sequence is not a swarm, and it does save tokens: the
+One long lead session, one or two subagents at a time. That is not a swarm, and it does save tokens: the
 file dumps, build logs and trial and error stay in its context, and the lead's context takes in only the report. On
 the source project two such cards used 509k and 678k tokens of their own, and each came back to the lead as a short
 summary. Run in the lead, all of that would have stayed in the context every later message pays for.
@@ -119,8 +119,10 @@ summary. Run in the lead, all of that would have stayed in the context every lat
 
 Rules:
 
-1. **One subagent at a time.** The lead waits for the notification, or works on files the card does not touch. Machine
-   limits then stay simple too: at 100 % CPU a swarm's agents spent 30-40 minutes queueing for a slot.
+1. **One or two at a time.** Start a second only when the two cards touch different files and will not both need the
+   heavy machine slots: at 100 % CPU a swarm's agents spent 30-40 minutes queueing for a slot. There is no prize for
+   the second one, because the lead has to read and check every report. Meanwhile the lead works on files no card
+   touches.
 2. **A card is bounded.** One outcome, the files to read, acceptance numbers, what to leave alone, where the report goes.
    If you cannot write the brief, you do not understand the task yet.
 3. **A fresh agent per card.** Never wake an old giant to ask it a small thing. That is what burned the swarm day.

@@ -16,14 +16,14 @@ Before anything else, tell the user, plainly:
 
 > Running this method with a swarm of agents is expensive. On the project it comes from, one swarm day burned 4-5
 > million tokens, mostly by waking lane agents that each carried 300-800k tokens of context. Three modes:
-> - **chain** (recommended): one long lead session (Fable or Opus) hands one bounded card at a time to one subagent
->   (Opus or Sonnet), waits for the report, then goes on. The logs and trial and error stay out of the lead's context.
+> - **chain** (recommended): one long lead session (Fable or Opus) hands bounded cards to one or two subagents at a time
+>   (Opus or Sonnet), takes the reports, then goes on. The logs and trial and error stay out of the lead's context.
 > - **single**: one session, no subagents, cheapest on small projects.
 > - **swarm**: a lead plus parallel lanes, fastest wall-clock, by far the most expensive.
 > Which mode do you want? (recommended: chain)
 
-Record the answer as `mode` (`chain`, `single` or `swarm`). A subagent in sequence is not a swarm: in `chain` mode one
-at a time is the normal way to work. Do not run parallel lanes before the user chose swarm mode.
+Record the answer as `mode` (`chain`, `single` or `swarm`). A subagent or two on bounded cards is not a swarm: in `chain`
+mode that is the normal way to work. Do not run a lead with parallel lanes before the user chose swarm mode.
 
 ## 1. Onboarding interview
 
@@ -128,11 +128,11 @@ pwsh -File windows/ci.ps1 -Only twin          # the native twin: build, host sui
 Follow `harness/swarm/PLAN.md` (from `references/chain-plan.md`) and `docs/SWARM.md` section 6:
 
 1. The lead owns the plan, the decisions and the owner. It does small jobs itself, a handful of tool calls.
-2. A job that would fill the lead's context with logs and file dumps goes to ONE subagent as ONE bounded card: one
+2. A job that would fill the lead's context with logs and file dumps goes to a subagent as ONE bounded card: one
    outcome, what to read, acceptance numbers, what to leave alone, a report file. Opus for subtle cards, Sonnet for
    mechanical ones.
-3. The lead waits for the report, or works on something that touches other files meanwhile, but starts no second
-   subagent. It spot-checks a number from the report, then lands the card.
+3. Run one or two at a time. Start a second only when the two cards touch different files and will not both need the
+   heavy machine slots. The lead takes each report, spot-checks a number from it, then lands the card.
 4. A fresh agent per card. Never wake an old agent with a large context to ask it a small thing.
 5. Long machine jobs, questions and stopping work as in single-session mode below.
 

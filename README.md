@@ -148,7 +148,7 @@ The whole method on one page: [docs/METHOD.md](docs/METHOD.md).
 > Running this method as a **swarm** (a lead agent plus parallel lane agents) is expensive. On the project it comes
 > from, **one swarm day burned 4-5 million tokens**, and most of that was not the work: it was waking lane agents that
 > each carried **300-800k tokens of context** to read a message or check a log. The default is now a **chain**: one long
-> lead session (Fable or Opus) hands one bounded card at a time to one subagent (Opus or Sonnet) and waits for the report,
+> lead session (Fable or Opus) hands bounded cards to one or two subagents at a time (Opus or Sonnet) and checks each report,
 > so logs and trial and error stay out of the lead's context. The skill also offers a single session with no subagents,
 > and the swarm. Choose the swarm on purpose.
 

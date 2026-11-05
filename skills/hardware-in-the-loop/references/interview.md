@@ -48,7 +48,7 @@ The answers become `answers.json`, which `scripts/scaffold.py` turns into the pr
 
 | # | Question | Options | Recommended default |
 |---|---|---|---|
-| 17 | Mode | **chain** (one long lead session, Fable or Opus, hands one bounded card at a time to one subagent, Opus or Sonnet, and waits; keeps the lead's context small) / **single session** (one agent works step by step, no subagents; cheapest on small projects) / **swarm** (a lead plus parallel lanes in worktrees; fastest wall-clock, a swarm day has burned 4-5 million tokens) | chain |
+| 17 | Mode | **chain** (one long lead session, Fable or Opus, hands bounded cards to one or two subagents at a time, Opus or Sonnet; keeps the lead's context small) / **single session** (one agent works step by step, no subagents; cheapest on small projects) / **swarm** (a lead plus parallel lanes in worktrees; fastest wall-clock, a swarm day has burned 4-5 million tokens) | chain |
 | 18 | Usage tripwire | weekly percentage at which every agent stops and writes a resume document | 95 % |
 | 19 | Standing decisions already made | anything the agents must never re-ask (materials, connectors, voltages) | none |
 
