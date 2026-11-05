@@ -6,9 +6,11 @@
 <title>CAD viewer</title>
 <!--
   Web CAD viewer for packed CadQuery builds (pack_mesh.py output), with section planes, x-ray, a parts list by mass,
-  a live mass / CG panel, a materials panel, optional PCB and harness overlays, and review notes.
+  a live mass / CG panel, a materials panel, optional PCB and harness overlays, review notes, per-part material looks,
+  KiCad board pictures laid on the board parts (PCB X-ray), a wire-only view (Wire X-ray) and display-surface pictures.
+  Section planes: value field, stepper and wheel, 0.1 mm per step, Shift 1 mm, Alt 0.01 mm, hold to run.
   Data files (fetched relative to this page):
-    mesh.json            {"chunks", "bytes", "build", "about", "pcb": [names], "harness": name}
+    mesh.json            {"chunks", "bytes", "build", "about", "title", "pcb": [names], "harness": name}
     mesh_<k>.json        {"b64": ...} pieces of the 'HILM' payload
     <board>.json         pcb_to_json.py output (optional, listed in mesh.json or ?pcb=a.json,b.json)
     <wires>.json         harness runs + ties (optional, listed in mesh.json or ?harness=wires.json)
@@ -75,6 +77,21 @@
   .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 12px; font-size:12.5px; font-variant-numeric:tabular-nums; }
   .kv span:nth-child(odd) { color:var(--dim); }
   .big { font-size:20px; font-weight:600; letter-spacing:.2px; font-variant-numeric:tabular-nums; }
+
+  /* ---- section planes: value field, stepper, hold-to-run; modes that have nothing to show are dimmed ---- */
+  .row.ax { flex-wrap:wrap; row-gap:2px; }
+  .row.ax input[type=range] { flex:1 1 100%; order:9; margin:0; touch-action:none; }
+  .row input.val { width:68px; margin-left:auto; padding:3px 6px; border:1px solid transparent; border-radius:7px; background:rgba(255,255,255,.06); color:var(--fg);
+                   text-align:right; font:inherit; font-size:12px; font-variant-numeric:tabular-nums; transition:border-color .2s, background .2s; }
+  .row input.val:focus { outline:none; border-color:var(--acc); background:rgba(255,255,255,.1); }
+  .row input.val::placeholder { color:var(--dim); }
+  .stp { display:inline-flex; flex:none; border-radius:8px; overflow:hidden; background:rgba(255,255,255,.08); user-select:none; -webkit-user-select:none; }
+  .stp b { width:30px; height:26px; display:grid; place-items:center; font-weight:500; font-size:15px; cursor:pointer; touch-action:none; transition:background .15s, transform .35s var(--spring); }
+  .stp b + b { border-left:1px solid rgba(255,255,255,.1); }
+  .stp b:hover { background:rgba(255,255,255,.1); }
+  .stp b:active { background:var(--acc); transform:scale(.94); }
+  .btn.dis { opacity:.38; }
+  @media (max-width:720px) { .stp b { width:40px; height:34px; } }
 
   /* ---- list rows (parts, materials, runs) ---- */
   .p { display:flex; align-items:center; gap:8px; padding:6px; border-radius:10px; cursor:pointer; transition:background .2s; }
@@ -165,10 +182,11 @@
   <div class="panel card" data-pane="sections">
     <header><b>Section planes</b><span class="muted">mm, model frame</span><span class="x" data-close="sections">&times;</span></header>
     <div class="body">
-      <div class="row"><label>X</label><div class="sw" data-ax="0"></div><input type="range" data-ax="0" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="0">off</span><span class="flip" data-ax="0">flip</span></div>
-      <div class="row"><label>Y</label><div class="sw" data-ax="1"></div><input type="range" data-ax="1" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="1">off</span><span class="flip" data-ax="1">flip</span></div>
-      <div class="row"><label>Z</label><div class="sw" data-ax="2"></div><input type="range" data-ax="2" min="-200" max="200" step="0.5" value="0"><span class="val" data-ax="2">off</span><span class="flip" data-ax="2">flip</span></div>
-      <div class="row" style="flex-wrap:wrap;margin-top:8px"><span class="btn" id="xray">X-ray</span><span class="btn" id="bright">Fullbright</span><span class="btn" id="reset">Reset view</span><span class="btn" id="showall">Show all</span></div>
+      <div class="muted" style="font-size:11.5px">&minus; / + or wheel: 0.1 mm. Shift 1 mm, Alt 0.01. Hold to run. Or type the value.</div>
+      <div class="row ax"><label>X</label><div class="sw" data-ax="0"></div><input class="val" data-ax="0" inputmode="decimal" placeholder="off" aria-label="X plane, mm"><span class="stp" data-ax="0"><b data-d="-1" aria-label="X minus">&minus;</b><b data-d="1" aria-label="X plus">+</b></span><span class="flip" data-ax="0">flip</span><input type="range" data-ax="0" min="-200" max="200" step="0.01" value="0"></div>
+      <div class="row ax"><label>Y</label><div class="sw" data-ax="1"></div><input class="val" data-ax="1" inputmode="decimal" placeholder="off" aria-label="Y plane, mm"><span class="stp" data-ax="1"><b data-d="-1" aria-label="Y minus">&minus;</b><b data-d="1" aria-label="Y plus">+</b></span><span class="flip" data-ax="1">flip</span><input type="range" data-ax="1" min="-200" max="200" step="0.01" value="0"></div>
+      <div class="row ax"><label>Z</label><div class="sw" data-ax="2"></div><input class="val" data-ax="2" inputmode="decimal" placeholder="off" aria-label="Z plane, mm"><span class="stp" data-ax="2"><b data-d="-1" aria-label="Z minus">&minus;</b><b data-d="1" aria-label="Z plus">+</b></span><span class="flip" data-ax="2">flip</span><input type="range" data-ax="2" min="-200" max="200" step="0.01" value="0"></div>
+      <div class="row" style="flex-wrap:wrap;margin-top:8px"><span class="btn" id="xray">X-ray</span><span class="btn" id="pcbx" title="Boards solid with their real render, everything else glass">PCB X-ray</span><span class="btn" id="wirex" title="Every wire, cable, flex tail and tie solid, everything else glass">Wire X-ray</span><span class="btn" id="bright">Fullbright</span><span class="btn" id="reset">Reset view</span><span class="btn" id="showall">Show all</span></div>
     </div>
   </div>
   <div class="panel card" data-pane="mass">
@@ -279,12 +297,15 @@ function activePlanes() {
 // =====================================================================================================================
 const parts = [], meshes = [], byName = new Map();
 const overlayMats = [];            // overlay materials follow the section planes too
+const screenMeshes = [];           // display-surface quads (addScreens); declared here because the render loop reads it from its first frame
+const boardQuads = [];             // board picture quads {mesh, part, url, side, ready} (addBoards)
+const boardInfo = new Map();       // part name -> its manifest `boards` entry, for the pick panel
 let manifest = null, head = null, xray = false, bright = false;
 async function load() {
   // mesh.json is either {"b64": ...} (one piece) or {"chunks": n, "bytes": total} with the pieces in mesh_<k>.json
   const r0 = await fetch('mesh.json', { cache: 'no-store' }); if (!r0.ok) throw new Error('mesh.json missing');
   head = await r0.json();
-  setBuild(head.build || '', head.about || '');
+  setBuild(head.build || '', head.about || '', head.title || '');
   const pieces = head.b64 != null ? [null] : Array.from({ length: Math.max(1, head.chunks | 0) }, (_, k) => `mesh_${k}.json`);
   const expect = head.bytes || 0; const bufs = []; let decoded = 0;
   for (let k = 0; k < pieces.length; k++) {
@@ -308,6 +329,7 @@ async function load() {
   const jl = dv.getUint32(4, true);
   manifest = JSON.parse(new TextDecoder().decode(buf.subarray(8, 8 + jl)));
   const base = 8 + jl, org = manifest.origin, sc = manifest.scale;
+  await setupEnvironment();                                      // before the materials: metalness depends on whether the studio room arrived
   for (const p of manifest.parts) {
     // copy into fresh buffers: typed-array views need aligned byte offsets and the JSON header length is arbitrary
     const q = new Uint16Array(buf.buffer.slice(base + p.off, base + p.off + p.nv * 6));
@@ -318,24 +340,30 @@ async function load() {
     g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeVertexNormals();
     const rgb = Array.isArray(p.rgb) && p.rgb.length === 3 ? p.rgb : [0.62, 0.64, 0.68];
     if (!v3ok(p.com)) p.com = null;
-    const metal = /alumin|steel|stainless|titan|brass|bronze|copper|6061|7075|metal/i.test(p.material || '');
-    const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(rgb[0], rgb[1], rgb[2]), roughness: 0.62, metalness: metal ? 0.45 : 0.05, side: THREE.DoubleSide, clippingPlanes: [], clipShadows: false });
+    p.rgb = rgb;
+    const m = makeMaterial(p);                                   // PBR recipe by look class (the packer's `cls`), flat colour from the packer
     const mesh = new THREE.Mesh(g, m); mesh.userData = p; root.add(mesh);
     // change marks from the packer: the glow colour per part (new = orange, reshaped = blue)
     mesh.userData.glow = p.new ? new THREE.Color(0.9, 0.42, 0.08) : (p.changed ? new THREE.Color(0.2, 0.42, 1.0) : null);
     p.rgb = rgb; parts.push(p); meshes.push(mesh); byName.set(p.name, mesh);
   }
   fitSliders();
+  addScreens();
+  addBoards();                                                   // board pictures: quads are placed now, the images decode after the first frame
+  const hasBoards = parts.some(p => p.board) || boardInfo.size > 0, hasWires = parts.some(p => p.wire);
+  for (const [id, ok, why] of [['pcbx', hasBoards, 'No board parts in this pack'], ['wirex', hasWires, 'No wire parts in this pack']]) { $(id).classList.toggle('dis', !ok); if (!ok) $(id).title = why; }
   buildMaterials(); buildList(); resetView(); applyClips(); buildCgMarker(); updateMass();
   const L = $('load'); L.style.opacity = 0; setTimeout(() => L.remove(), 450);
+  setTimeout(decodeBoardTextures, 300);                          // lazy: the model is already on screen when the board pictures start decoding
 }
 
 // ---- build label: the packer's --label / --about; "Build 7" names the change-mark button "new in 7"
 let BUILD = '', BL = '';
-function setBuild(label, about) {
+function setBuild(label, about, title) {
   BUILD = String(label || ''); const m = /build\s+(\S+)/i.exec(BUILD); BL = m ? m[1] : '';
-  document.title = `CAD viewer${BUILD ? ', ' + BUILD : ''}`;
-  $('title').textContent = `CAD viewer${BUILD ? ', ' + BUILD : ''}`;
+  const T = String(title || 'CAD viewer');
+  document.title = `${T}${BUILD ? ', ' + BUILD : ''}`;
+  $('title').textContent = `${T}${BUILD ? ', ' + BUILD : ''}`;
   $('newf').textContent = BL ? `new in ${BL}` : 'new in this build';
   if (about) { const d = document.createElement('div'); d.className = 'sub'; d.style.marginTop = '6px'; d.textContent = String(about); $('hud').querySelector('.more').appendChild(d); }
 }
@@ -347,8 +375,8 @@ function fitSliders() {
   for (let i = 0; i < 3; i++) {
     const a = lo[i], b = lo[i] + 65000 * sc[i], pad = Math.max(1, (b - a) * 0.05);
     const r = document.querySelector(`input[type=range][data-ax="${i}"]`);
-    r.min = (a - pad).toFixed(1); r.max = (b + pad).toFixed(1); r.step = Math.max(0.05, (b - a) / 800).toFixed(2);
-    clipPos[i] = (a + b) / 2; r.value = clipPos[i];
+    r.min = (a - pad).toFixed(2); r.max = (b + pad).toFixed(2); r.step = '0.01';
+    clipPos[i] = Math.round((a + b) / 2 * 100) / 100; r.value = clipPos[i];
   }
 }
 
@@ -362,25 +390,90 @@ function resetView() {
 }
 function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
-function applyClips() { const cp = activePlanes(); for (const m of meshes) m.material.clippingPlanes = cp; for (const mt of overlayMats) mt.clippingPlanes = cp; }
+// the screens and board pictures follow the section planes too
+function applyClips() { const cp = activePlanes(); for (const m of meshes.concat(screenMeshes, boardQuads.map(b => b.mesh))) m.material.clippingPlanes = cp; for (const mt of overlayMats) mt.clippingPlanes = cp; }
 let newMode = false;   // "new in this build": the changed parts glow, everything else drops to a faint shell
+// solo: 'pcb' or 'wire'. That family stays solid, the rest of the model is glass, and coat shells vanish so nothing films the copper.
+// Which parts are boards or wires is decided by the packer from viewer.config.json (`board`, `wire` on each part), not here.
+let solo = null;
+const isBoard = m => boardInfo.has(m.userData.name) || !!m.userData.board;
+const isWire = m => !!m.userData.wire;
 function applyLook() {
   for (const m of meshes) {
+    if (solo) {
+      const coat = m.userData.cls === 'coat', b = !coat && (solo === 'pcb' ? isBoard(m) : isWire(m));
+      m.material.transparent = !b; m.material.opacity = b ? 1 : (coat ? 0 : 0.022); m.material.depthWrite = b;
+      m.material.emissive = new THREE.Color(0, 0, 0);
+      continue;
+    }
     const g = newMode && m.userData.glow;
-    const dim = newMode && !m.userData.glow;
-    m.material.transparent = xray || dim; m.material.opacity = xray ? 0.28 : (dim ? 0.14 : 1); m.material.depthWrite = !(xray || dim);
+    const dim = newMode && !m.userData.glow;        // untouched parts: faint glass so the new ones read through
+    // a clear-coat shell has its own base opacity (LOOK.coat); x-ray / dimming may only make it fainter, never more solid
+    const bo = m.material.userData.baseOpacity || 1;
+    m.material.transparent = xray || dim || bo < 1; m.material.opacity = Math.min(bo, xray ? 0.28 : (dim ? 0.14 : 1)); m.material.depthWrite = !(xray || dim || bo < 1);
     m.material.emissive = g ? m.userData.glow.clone().multiplyScalar(0.75) : (bright ? m.material.color.clone().multiplyScalar(0.55) : new THREE.Color(0, 0, 0));
-    m.material.needsUpdate = true;
   }
+  syncBoardLook();
 }
-(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+// a board picture or a screen is shown with its part
+(function loop() {
+  requestAnimationFrame(loop); controls.update();
+  for (const b of boardQuads) b.mesh.visible = b.ready && b.part.visible;
+  for (const q of screenMeshes) { const sp = q.userData.part ? byName.get(q.userData.part) : null; q.visible = !sp || sp.visible; }
+  renderer.render(scene, camera);
+})();
 
 // ---- section panel wiring
 for (const sw of document.querySelectorAll('.sw[data-ax]')) sw.onclick = () => { const i = +sw.dataset.ax; clipOn[i] = !clipOn[i]; sw.classList.toggle('on', clipOn[i]); showVal(i); applyClips(); };
-for (const r of document.querySelectorAll('input[type=range][data-ax]')) r.oninput = () => { const i = +r.dataset.ax; clipPos[i] = +r.value; showVal(i); applyClips(); };
+const rangeOf = i => document.querySelector(`input[type=range][data-ax="${i}"]`);
+// Set plane i to v mm: clamped to its slider, kept to 0.01 mm, and the plane comes on, because nudging a plane that is off shows nothing
+function setClip(i, v) {
+  if (!Number.isFinite(v)) { showVal(i); return; }
+  const r = rangeOf(i);
+  clipPos[i] = Math.round(Math.min(+r.max, Math.max(+r.min, v)) * 100) / 100;
+  r.value = clipPos[i];
+  if (!clipOn[i]) { clipOn[i] = true; document.querySelector(`.sw[data-ax="${i}"]`).classList.add('on'); }
+  showVal(i); applyClips();
+}
+const stepOf = e => (e.shiftKey ? 1 : (e.altKey ? 0.01 : 0.1));
+for (const r of document.querySelectorAll('input[type=range][data-ax]')) {
+  const i = +r.dataset.ax;
+  r.oninput = () => setClip(i, +r.value);
+  r.addEventListener('wheel', e => { e.preventDefault(); setClip(i, clipPos[i] + (e.deltaY < 0 ? 1 : -1) * stepOf(e)); }, { passive: false });
+}
+for (const v of document.querySelectorAll('input.val')) {
+  const i = +v.dataset.ax;
+  v.onchange = () => setClip(i, parseFloat(v.value));
+  v.onkeydown = e => { if (e.key === 'Enter') v.blur(); if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setClip(i, clipPos[i] + (e.key === 'ArrowUp' ? 1 : -1) * stepOf(e)); } };
+  v.onfocus = () => v.select();
+}
+// stepper: one press is one step, holding runs at 12 steps a second after a short wait, so a single tap can never overshoot
+for (const b of document.querySelectorAll('.stp b')) {
+  let t0 = 0, t1 = 0;
+  const stop = () => { clearTimeout(t0); clearInterval(t1); };
+  b.onpointerdown = e => {
+    e.preventDefault();
+    const i = +b.parentElement.dataset.ax, d = +b.dataset.d, st = stepOf(e);
+    setClip(i, clipPos[i] + d * st);
+    t0 = setTimeout(() => { t1 = setInterval(() => setClip(i, clipPos[i] + d * st), 83); }, 380);
+  };
+  b.onpointerup = b.onpointerleave = b.onpointercancel = stop;
+}
 for (const f of document.querySelectorAll('.flip')) f.onclick = () => { const i = +f.dataset.ax; clipFlip[i] = !clipFlip[i]; f.classList.toggle('on', clipFlip[i]); applyClips(); };
-function showVal(i) { document.querySelector(`.val[data-ax="${i}"]`).textContent = clipOn[i] ? clipPos[i].toFixed(1) + ' mm' : 'off'; }
-$('xray').onclick = e => { xray = !xray; e.target.classList.toggle('on', xray); applyLook(); };
+function showVal(i) { const v = document.querySelector(`input.val[data-ax="${i}"]`); if (document.activeElement !== v || !clipOn[i]) v.value = clipOn[i] ? clipPos[i].toFixed(2) : ''; }
+// X-ray, PCB X-ray and Wire X-ray are one choice: pressing one releases the others, pressing it again goes back to solid
+function setLookMode(mode) {
+  xray = mode === 'xray'; solo = (mode === 'pcb' || mode === 'wire') ? mode : null;
+  $('xray').classList.toggle('on', xray);
+  $('pcbx').classList.toggle('on', solo === 'pcb');
+  $('wirex').classList.toggle('on', solo === 'wire');
+  applyLook();
+}
+$('xray').onclick = () => setLookMode(xray ? null : 'xray');
+for (const [id, mode] of [['pcbx', 'pcb'], ['wirex', 'wire']]) $(id).onclick = e => {
+  if (e.currentTarget.classList.contains('dis')) { toast(e.currentTarget.title); return; }
+  setLookMode(solo === mode ? null : mode);
+};
 $('bright').onclick = e => { bright = !bright; e.target.classList.toggle('on', bright); applyLook(); };
 $('reset').onclick = resetView;
 $('showall').onclick = () => { for (const m of meshes) m.visible = true; refreshList(); };
@@ -684,6 +777,167 @@ function showFootprint(u) {
 }
 
 // =====================================================================================================================
+//  Material looks. The packer decides each part's class (viewer.config.json rules, then built-in material words) and
+//  writes it as `cls`; each class below is a small PBR recipe: roughness / metalness / how much of the studio room it
+//  reflects (env) and an optional procedural roughness pattern (grain). No image files: the shine comes from a generated
+//  studio environment (three's RoomEnvironment through PMREM), so metals reflect a room instead of black.
+//    coat  conformal-coat shell, clear and glossy so the board picture under it stays readable
+//    fr4   solder-mask satin             copper / steel / alu / ti   metals (alu anodised, ti brushed streaks)
+//    print printed polymer, matte with a fine grain      cf  carbon laminate, semi-gloss
+//    soft  rubber / TPU / gaskets / foam   film  kapton and flex tails   glass  windows and lenses   wire  insulation
+// =====================================================================================================================
+const LOOK = {
+  coat:   { rough: 0.06, metal: 0.00, env: 1.20, opacity: 0.20 },
+  fr4:    { rough: 0.48, metal: 0.00, env: 0.55 },
+  copper: { rough: 0.30, metal: 0.95, env: 1.00 },
+  alu:    { rough: 0.26, metal: 0.92, env: 1.15 },
+  ti:     { rough: 0.40, metal: 0.88, env: 1.00, grain: 'brush' },
+  steel:  { rough: 0.22, metal: 0.95, env: 1.10 },
+  print:  { rough: 0.82, metal: 0.00, env: 0.30, grain: 'print' },
+  cf:     { rough: 0.32, metal: 0.15, env: 0.80 },
+  soft:   { rough: 0.92, metal: 0.00, env: 0.15 },
+  film:   { rough: 0.35, metal: 0.00, env: 0.80 },
+  glass:  { rough: 0.05, metal: 0.25, env: 1.20 },
+  wire:   { rough: 0.55, metal: 0.00, env: 0.40 },
+  plain:  { rough: 0.62, metal: 0.05, env: 0.40 },
+};
+// Procedural roughness pattern in object space (model frame, mm), patched into MeshStandardMaterial's roughness stage.
+// 'brush' = long streaks along model X, 'print' = fine isotropic grain. Roughness only: colour and shape stay put.
+const GRAIN_GLSL = `
+float hilH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float hilN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hilH(i), hilH(i + vec2(1.0, 0.0)), f.x), mix(hilH(i + vec2(0.0, 1.0)), hilH(i + vec2(1.0, 1.0)), f.x), f.y); }
+float hilGrain(vec3 p) {
+#ifdef HIL_BRUSH
+  return (hilN(vec2(p.x * 0.25, (p.y + p.z) * 14.0)) - 0.5) * 0.34;
+#else
+  return (hilN(vec2(p.x + p.z * 0.7, p.y - p.z * 0.4) * 9.0) - 0.5) * 0.14;
+#endif
+}`;
+function addGrain(mat, kind) {
+  mat.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vHilP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHilP = position;');
+    sh.fragmentShader = (kind === 'brush' ? '#define HIL_BRUSH\n' : '') + sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vHilP;\n' + GRAIN_GLSL)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = clamp(roughnessFactor + hilGrain(vHilP), 0.04, 1.0);');
+  };
+  mat.customProgramCacheKey = () => 'hilgrain_' + kind;      // brush and print compile to different programs
+}
+let envOk = false;                                           // the studio environment arrived: metals may be fully metallic
+async function setupEnvironment() {
+  // dynamic import: if the add-on cannot be fetched the viewer still opens, with flat metals
+  try {
+    const { RoomEnvironment } = await import('three/addons/environments/RoomEnvironment.js');
+    const pm = new THREE.PMREMGenerator(renderer);
+    scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; pm.dispose(); envOk = true;
+  } catch (e) { console.warn('studio environment unavailable, flat metals: ' + e.message); }
+}
+function makeMaterial(p) {
+  const cls = LOOK[p.cls] ? p.cls : 'plain', k = LOOK[cls];
+  const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(p.rgb[0], p.rgb[1], p.rgb[2]), roughness: k.rough,
+    metalness: envOk ? k.metal : Math.min(k.metal, 0.45), envMapIntensity: k.env, side: THREE.DoubleSide, clippingPlanes: [], clipShadows: false });
+  if (k.grain) addGrain(m, k.grain);
+  // base translucency is remembered so x-ray / "new in" dimming (applyLook) can fall back to it
+  m.userData = { cls, baseOpacity: k.opacity || 1 };
+  if (k.opacity) { m.transparent = true; m.opacity = k.opacity; m.depthWrite = false; }
+  return m;
+}
+
+// =====================================================================================================================
+//  Display surfaces: a picture painted on a screen. Each manifest screen is a model-frame rectangle (centre, normal, u / v axes,
+//  size in mm). Two quads per screen: the panel's active area as near-black glass, and the picture on top of it (unlit, not tone
+//  mapped) lifted 0.05 mm off the glass so it never z-fights. Orientation = basis (u, v, normal) at the centre.
+//  A screen without a picture stays a dark panel.
+// =====================================================================================================================
+function addScreens() {
+  const scr = (manifest && manifest.screens) || [], imgs = (manifest && manifest.screen_images) || {};
+  for (const sc of scr) {
+    if (!sc || !v3ok(sc.centre) || !v3ok(sc.u) || !v3ok(sc.v) || !v3ok(sc.normal) || !Array.isArray(sc.size)) continue;   // malformed entry: skip, the parts still draw
+    const u = new THREE.Vector3(...sc.u).normalize(), v = new THREE.Vector3(...sc.v).normalize(), n = new THREE.Vector3(...sc.normal).normalize();
+    const basis = new THREE.Matrix4().makeBasis(u, v, n);
+    const place = (w, h, lift, mat, at) => {
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+      q.setRotationFromMatrix(basis);
+      q.position.set(...(v3ok(at) ? at : sc.centre)).addScaledVector(n, lift);
+      q.userData = { name: sc.name + (sc.part ? ' (' + sc.part + ')' : ''), screen: true, part: sc.part || null };   // hides with its part (render loop)
+      q.material.clippingPlanes = activePlanes(); root.add(q); screenMeshes.push(q);
+      return q;
+    };
+    const ps = Array.isArray(sc.panel_size) && sc.panel_size.length === 2 ? sc.panel_size : sc.size;
+    place(ps[0], ps[1], 0.03, new THREE.MeshStandardMaterial({ color: 0x05060a, roughness: 0.25, metalness: 0.2, side: THREE.DoubleSide }), sc.panel_centre);
+    if (sc.image && typeof imgs[sc.image] === 'string') {
+      new THREE.TextureLoader().load(imgs[sc.image], tex => {
+        tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter; tex.magFilter = THREE.LinearFilter;
+        place(sc.size[0], sc.size[1], 0.08, new THREE.MeshBasicMaterial({ map: tex, toneMapped: false, side: THREE.DoubleSide }));
+      });
+    }
+  }
+}
+
+// =====================================================================================================================
+//  Board pictures. manifest.boards[i] describes one board part: {part, textured, img, size [w, h] mm, centre / u / v / normal =
+//  the TOP substrate face frame, bottom {centre, u, v, normal} (u already flipped: the bottom is seen from the other side),
+//  coat {part, lift_top_mm, lift_bottom_mm}}. manifest.board_images[img] = {top, bottom} WebP data URLs rendered by KiCad
+//  (silkscreen, pads, parts), shared by parts of one board file. Image-right = u, image-up = v, so each face is a plane with
+//  basis (u, v, normal) laid on the substrate. A board with textured: false stays plain colour. The CAD part keeps its component
+//  blocks, so a chip block stands on the picture of its own footprint. The coat shell is drawn clear (LOOK.coat).
+//  Decoding is lazy: the quads exist (hidden) when the model appears and the images decode one at a time after the first frame.
+// =====================================================================================================================
+const BOARD_LIFT = 0.03;                 // mm above the substrate: clear of the slab face, far below anything visible
+function frameOk(f) { return !!f && ['centre', 'u', 'v', 'normal'].every(k => v3ok(f[k])); }
+function addBoards() {
+  const rows = manifest && Array.isArray(manifest.boards) ? manifest.boards : [], imgs = (manifest && manifest.board_images) || {};
+  for (const b of rows) {
+    if (!b || !b.textured || !byName.has(b.part) || !imgs[b.img] || !Array.isArray(b.size) || !(b.size[0] > 0 && b.size[1] > 0)) continue;
+    const part = byName.get(b.part); boardInfo.set(b.part, b);
+    for (const [side, fr] of [['top', b], ['bottom', b.bottom]]) {
+      if (!frameOk(fr) || typeof imgs[b.img][side] !== 'string') continue;
+      const u = new THREE.Vector3(...fr.u).normalize(), v = new THREE.Vector3(...fr.v).normalize(), n = new THREE.Vector3(...fr.normal).normalize();
+      // a right-handed (u, v, normal) keeps the plane's front face toward the viewer; a mirrored frame is drawn from both sides instead
+      const rh = u.clone().cross(v).dot(n) > 0;
+      const mat = new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0, envMapIntensity: 0.55, alphaTest: 0.35, side: rh ? THREE.FrontSide : THREE.DoubleSide,
+        clippingPlanes: activePlanes(), polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+      const q = new THREE.Mesh(new THREE.PlaneGeometry(b.size[0], b.size[1]), mat);
+      q.setRotationFromMatrix(new THREE.Matrix4().makeBasis(u, v, n));
+      q.position.set(...fr.centre).addScaledVector(n, BOARD_LIFT);
+      q.visible = false; q.userData = { name: `${b.part} (${side} picture)`, board: true };
+      root.add(q);
+      boardQuads.push({ mesh: q, part, url: imgs[b.img][side], side, ready: false });
+    }
+  }
+}
+// One line for the pick panel. A slab whose outline is symmetric fits its render in several poses (b.ties of them) and the packer
+// cannot tell which is real from the STL alone, so those boards say so instead of claiming the silkscreen sits the right way round.
+function boardLine(name) {
+  const b = boardInfo.get(name); if (!b) return '';
+  const pose = b.frame_source === 'builder' ? 'orientation from the builder frame' + (b.builder_frame ? ' (' + esc(b.builder_frame) + ')' : '')
+    : b.ambiguous ? `<span style="color:#ffb070">orientation unverified (${esc(b.ties || 'several')} equal fits)</span>` : 'placement unique';
+  return `<br>PCB picture: ${esc(b.pcb ? b.pcb.split('/').pop() : 'KiCad render')} &middot; ${pose} &middot; outline match ${((Math.min(...(b.iou || [0])) || 0) * 100).toFixed(1)} %`;
+}
+const boardTex = new Map();              // data URL -> Promise<Texture>: parts of one board file decode their image once
+async function decodeBoardTextures() {
+  const loader = new THREE.TextureLoader(), aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  for (const b of boardQuads) {
+    try {
+      if (!boardTex.has(b.url)) boardTex.set(b.url, loader.loadAsync(b.url).then(t => { t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = aniso; return t; }));
+      const tex = await boardTex.get(b.url), m = b.mesh.material;
+      m.map = tex; m.emissiveMap = tex; m.needsUpdate = true; b.ready = true;       // emissiveMap: fullbright / "new in" glow keep the picture
+    } catch (e) { console.warn(`board picture ${b.part.userData.name} ${b.side}: ${e && e.message || e}`); }
+    await new Promise(r => setTimeout(r, 0));                                         // yield between images so orbiting stays smooth
+  }
+  syncBoardLook();
+}
+// a board face fades with its part (x-ray, "new in" dimming), glows with it, and lights up in fullbright
+function syncBoardLook() {
+  for (const b of boardQuads) {
+    const pm = b.part.material, m = b.mesh.material;
+    m.opacity = pm.opacity; m.transparent = pm.opacity < 1; m.depthWrite = pm.depthWrite;
+    if (newMode && b.part.userData.glow) m.emissive.copy(pm.emissive); else m.emissive.setScalar(bright ? 0.55 : 0);
+  }
+}
+
+// =====================================================================================================================
 //  Picking: note pins first, then the nearest visible part or overlay item on the un-clipped side
 // =====================================================================================================================
 const pick = $('pick'), ray = new THREE.Raycaster(); let downAt = null, pickAt = null;
@@ -696,7 +950,9 @@ canvas.addEventListener('pointerup', e => {
   const ph = ray.intersectObjects(pins, false)[0]; if (ph) { openNote(ph.object.userData.note); return; }
   const cand = meshes.filter(m => m.visible).concat(pickables.filter(shown));
   const hits = ray.intersectObjects(cand, false);
-  const cp = activePlanes(); const h = hits.find(x => cp.every(pl => pl.distanceToPoint(x.point) >= 0));
+  // honour the section planes; the clear coat shells are see-through, so a tap goes to what is seen under them
+  const cp = activePlanes(); const kept = hits.filter(x => cp.every(pl => pl.distanceToPoint(x.point) >= 0));
+  const h = kept.find(x => !(x.object.material.userData && x.object.material.userData.cls === 'coat')) || kept[0];
   if (!h) { selected = null; lightRun(null); pick.classList.remove('show'); refreshList(); return; }
   const u = h.object.userData;
   if (u.kind === 'run') { showRun(h.object); return; }
@@ -709,7 +965,7 @@ function select(name) {
   selected = name; lightRun(null); const p = mesh.userData;
   const at = pickAt || p.com; pickAt = null;
   const lbl = BL || 'this build';
-  pick.innerHTML = `<b>${esc(p.name)}</b>${p.new ? `<span class="tag new">NEW in ${esc(lbl)}</span> ` : (p.changed ? `<span class="tag chg">reshaped in ${esc(lbl)}</span> ` : '')}${p.mass_g == null ? 'massless' : grams(p.mass_g)} &middot; ${esc(p.material || 'no material')}${p.link ? ' &middot; ' + esc(p.link) : ''}<br>COM ${p.com ? '(' + p.com.map(x => fmt(x)).join(', ') + ') mm' : '-'} &middot; z ${fmt(p.zmin)} .. ${fmt(p.zmax)}<br>${p.nt} triangles<div style="margin-top:8px"><span class="btn accent" id="addnote">Add note</span> <span class="btn" id="hidepart">Hide</span></div>`;
+  pick.innerHTML = `<b>${esc(p.name)}</b>${p.new ? `<span class="tag new">NEW in ${esc(lbl)}</span> ` : (p.changed ? `<span class="tag chg">reshaped in ${esc(lbl)}</span> ` : '')}${p.mass_g == null ? 'massless' : grams(p.mass_g)} &middot; ${esc(p.material || 'no material')}${p.link ? ' &middot; ' + esc(p.link) : ''}<br>COM ${p.com ? '(' + p.com.map(x => fmt(x)).join(', ') + ') mm' : '-'} &middot; z ${fmt(p.zmin)} .. ${fmt(p.zmax)}<br>${p.nt} triangles${boardLine(name)}<div style="margin-top:8px"><span class="btn accent" id="addnote">Add note</span> <span class="btn" id="hidepart">Hide</span></div>`;
   pick.classList.add('show');
   $('addnote').onclick = () => openSheet({ part: name, at });
   $('hidepart').onclick = () => { mesh.visible = false; pick.classList.remove('show'); refreshList(); };
@@ -729,7 +985,7 @@ function currentView() {
   const cam = root.worldToLocal(camera.position.clone()), tgt = root.worldToLocal(controls.target.clone());
   return { cam: cam.toArray().map(v => +v.toFixed(2)), target: tgt.toArray().map(v => +v.toFixed(2)),
            clips: [0, 1, 2].map(i => ({ on: clipOn[i], pos: clipPos[i], flip: clipFlip[i] })),
-           hidden: meshes.filter(m => !m.visible).map(m => m.userData.name), xray, bright, cg: cgOn, pcb: pcbOn, harness: harnessOn };
+           hidden: meshes.filter(m => !m.visible).map(m => m.userData.name), xray, pcbx: solo === 'pcb', wirex: solo === 'wire', bright, cg: cgOn, pcb: pcbOn, harness: harnessOn };
 }
 function restoreView(v) {
   if (!v || typeof v !== 'object') return;
@@ -742,7 +998,7 @@ function restoreView(v) {
     document.querySelector(`.flip[data-ax="${i}"]`).classList.toggle('on', clipFlip[i]); showVal(i);
   });
   if (Array.isArray(v.hidden)) { const hs = new Set(v.hidden); for (const m of meshes) m.visible = !hs.has(m.userData.name); }
-  if ('xray' in v) { xray = !!v.xray; $('xray').classList.toggle('on', xray); }
+  if ('xray' in v || 'pcbx' in v || 'wirex' in v) setLookMode(v.xray ? 'xray' : (v.pcbx ? 'pcb' : (v.wirex ? 'wire' : null)));
   if ('bright' in v) { bright = !!v.bright; $('bright').classList.toggle('on', bright); }
   if ('cg' in v) cgOn = !!v.cg;
   if ('pcb' in v) { pcbOn = !!v.pcb; for (const b of boards) b.group.visible = pcbOn; }
@@ -847,7 +1103,15 @@ $('nview').onclick = () => openSheet({ part: null, at: null });
 // =====================================================================================================================
 //  Start: payload, then overlays (optional), then notes
 // =====================================================================================================================
-load().then(loadOverlays).then(loadNotes).catch(e => { $('lt').textContent = 'load failed: ' + e.message; console.error(e); });
+// #view=<url-encoded JSON in the notes' view format> opens the page on that camera / section / hidden-parts state: a shareable link
+// that restores exactly what a note saved.
+function applyHashView() {
+  const m = /^#view=(.+)$/.exec(location.hash); if (!m) return;
+  try { restoreView(JSON.parse(decodeURIComponent(m[1]))); } catch { toast('That #view link is not valid'); }
+}
+addEventListener('hashchange', applyHashView);
+load().then(loadOverlays).then(loadNotes).then(applyHashView).catch(e => { $('lt').textContent = 'load failed: ' + e.message; console.error(e); });
+window.hilViewer = { boardInfo, screenMeshes, byName, boardLine, setLookMode };   // read-only handle for headless checks (module scope is not visible to evaluate)
 </script>
 </body>
 </html>

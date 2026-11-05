@@ -29,8 +29,25 @@
                --changed <text file, one part name per line> flags "changed". --label names the build, --about adds a
                one-paragraph blurb under the title.
 
+ Project facts (viewer.config.json beside this script, or --config): parts to skip, the look class of each part (coat,
+ fr4, copper, alu, ti, steel, print, cf, soft, film, glass, wire, plain; written into the manifest as `cls`), which parts
+ are boards (`board`, for PCB X-ray) and the CAD part -> KiCad file map. No part name is known to this script.
+
+ Optional extras:
+   --boards <dir>         board textures from render_boards.py: the manifest gains `boards` (face frame, silhouette IoU,
+                          coat stand-off, or `textured: false` + the reason) and `board_images` (WebP data URLs). Needs
+                          Pillow and scipy. --boards-report <json> writes the board table without the pictures,
+                          --boards-sheet <png> a review sheet with the STL outline laid on every render.
+   --screens <json>       display surfaces, a screen the viewer paints a picture on:
+                          {"surfaces": [{"name", "part"?, "centre_mm": [x,y,z], "normal": [..], "u_axis": [..],
+                           "v_axis": [..], "size_mm": [w,h], "image": "<png, relative to this json>",
+                           "panel": {"active_area_mm": [w,h], "active_area_centre_mm": [x,y,z]}?, "note"?}]}
+ A pack with neither is a plain mesh pack: no boards, no screens, no Pillow, no scipy.
+
  Usage: python pack_mesh.py <build dir> <out dir> [--stl-subdir stl] [--baseline parts.json] [--changed names.txt]
                             [--label "Build 7"] [--about "text"] [--pcb board.json ...] [--harness wires.json]
+                            [--config viewer.config.json] [--boards dir] [--boards-report f.json] [--boards-sheet f.png]
+                            [--screens screens.json]
 =======================================================================================================================
 """
 import argparse
@@ -51,8 +68,12 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # viewer/ (only used to point the user at index.html)
+HERE = os.path.dirname(os.path.abspath(__file__))          # tools/cad_viewer: the page, the config and the helper modules sit here
+sys.path.insert(0, HERE)
+import viewer_config  # noqa: E402  (shipped beside this file)
+
 MAGIC = b"HILM"
+SCREEN_IMAGE_MAX = 2 * 1024 * 1024                           # bytes of one screen picture the manifest will carry
 CHUNK = 12 * 1024 * 1024                                     # 12 MiB raw per piece = 16 MiB of base64, under a 20 MiB cap
 OVERLAY_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,120}\.json$")   # the names serve.py will agree to serve
 
@@ -104,6 +125,45 @@ def copy_overlay(src, out_dir, kind):
     return name
 
 
+def load_screens(path):
+    """
+    Display surfaces from a screens JSON: (list of surface dicts for the manifest, {image key: data URL}).
+    A malformed surface is skipped with a message; a missing or oversize picture leaves the surface as a plain dark panel.
+    """
+    data = read_json(path, "--screens")
+    rows = data.get("surfaces") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        die(f"--screens {path}: expected an object with a 'surfaces' list")
+    base = os.path.dirname(os.path.abspath(path))
+    out, images = [], {}
+    for i, d in enumerate(rows):
+        c, n, u, v = (finite3(d.get(k)) if isinstance(d, dict) else None for k in ("centre_mm", "normal", "u_axis", "v_axis"))
+        size = d.get("size_mm") if isinstance(d, dict) else None
+        if not (c and n and u and v and isinstance(size, list) and len(size) == 2 and all(isinstance(x, (int, float)) and x > 0 for x in size)):
+            print(f"pack_mesh: screens[{i}] skipped: needs centre_mm, normal, u_axis, v_axis (3 numbers each) and size_mm (2 positive numbers)")
+            continue
+        pn = d.get("panel") if isinstance(d.get("panel"), dict) else {}
+        key, img = None, d.get("image")
+        if isinstance(img, str) and img:
+            f = img if os.path.isabs(img) else os.path.join(base, img)
+            if not os.path.isfile(f):
+                print(f"pack_mesh: screens[{i}] picture {f} not found: the surface stays a dark panel")
+            elif os.path.getsize(f) > SCREEN_IMAGE_MAX:
+                print(f"pack_mesh: screens[{i}] picture {f} is over {SCREEN_IMAGE_MAX} bytes: the surface stays a dark panel")
+            else:
+                key = os.path.basename(f)
+                if key not in images:
+                    ext = os.path.splitext(f)[1].lower().lstrip(".")
+                    mime = {"jpg": "jpeg", "jpeg": "jpeg", "webp": "webp"}.get(ext, "png")
+                    with open(f, "rb") as fh:
+                        images[key] = f"data:image/{mime};base64," + base64.b64encode(fh.read()).decode("ascii")
+        out.append(dict(name=str(d.get("name") or f"screen {i + 1}"), part=d.get("part") if isinstance(d.get("part"), str) else None,
+                        centre=c, normal=n, u=u, v=v, size=[float(x) for x in size], px=d.get("px"),
+                        panel_size=pn.get("active_area_mm"), panel_centre=finite3(pn.get("active_area_centre_mm")),
+                        image=key, note=d.get("note") if isinstance(d.get("note"), str) else None))
+    return out, images
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Pack per-part STLs + parts.json into the web viewer payload.")
     ap.add_argument("build", help="build dir holding parts.json and the STL subdir")
@@ -115,7 +175,13 @@ def main(argv=None):
     ap.add_argument("--about", default="", help="one paragraph shown under the title")
     ap.add_argument("--pcb", action="append", default=[], help="board JSON from pcb_to_json.py (repeatable)")
     ap.add_argument("--harness", help="wires JSON (harness runs + ties)")
+    ap.add_argument("--config", help="viewer config (default: viewer.config.json beside this script)")
+    ap.add_argument("--boards", help="folder written by render_boards.py: lay the KiCad renders on the board parts")
+    ap.add_argument("--boards-report", help="write the board table (without the pictures) to this JSON")
+    ap.add_argument("--boards-sheet", help="write a review sheet (render + STL outline per board) to this PNG")
+    ap.add_argument("--screens", help="display surfaces JSON (see the header)")
     a = ap.parse_args(argv)
+    cfg = viewer_config.load(a.config)
 
     # ---- heavy imports after argument parsing so --help works without numpy / trimesh
     try:
@@ -159,10 +225,13 @@ def main(argv=None):
             print(f"pack_mesh: no changed list at {a.changed}: no 'changed' marks")
 
     # ---- load every part mesh (index the triangle soup; skip, and say so, anything missing or empty)
-    meshes = []
+    meshes, skipped_names = [], []
     for name, row in rows.items():
         if not isinstance(name, str) or not name or not isinstance(row, dict):
             print(f"pack_mesh: skipping malformed part row {name!r}")
+            continue
+        if viewer_config.skipped(cfg, name):
+            skipped_names.append(name)                          # config skip_parts: out of the pack and out of its mass / CG
             continue
         stl = os.path.join(stl_dir, name + ".stl")
         if not os.path.isfile(stl):
@@ -201,9 +270,29 @@ def main(argv=None):
             com=[round(v, 3) for v in com],
             zmin=round(float(m.bounds[0][2]), 3), zmax=round(float(m.bounds[1][2]), 3),
             nv=int(len(q)), nt=int(len(idx)), off=off, nbytes=len(b),
+            cls=viewer_config.part_class(cfg, name, str(row.get("material") or "")), board=viewer_config.is_board_part(cfg, name), wire=viewer_config.is_wire_part(cfg, name),
             new=bool(baseline_names) and name not in baseline_names, changed=name in changed_names))
         blobs.append(b)
         off += len(b)
+
+    # ---- board textures and display surfaces (both optional; a mesh-only pack never imports Pillow or scipy)
+    boards_manifest, board_images = [], {}
+    if a.boards:
+        import board_textures
+        boards_manifest, board_images, board_stats, dbg = board_textures.collect({n: m for n, _, m in meshes}, cfg, a.boards)
+        for e in boards_manifest:
+            print("pack_mesh: board", "TEX " if e.get("textured") else "skip", f"{e['part']:30s}",
+                  (f"iou {e['iou']} margin {e['margin']} ties {e['ties']} size {e['size']}" if e.get("textured") else e.get("reason")))
+        if a.boards_report:
+            os.makedirs(os.path.dirname(os.path.abspath(a.boards_report)), exist_ok=True)
+            with open(a.boards_report, "w", encoding="utf-8") as fh:
+                json.dump(dict(build=a.label, stats=board_stats, boards=boards_manifest), fh, indent=1)
+        if a.boards_sheet and dbg:
+            board_textures.board_sheet(a.boards_sheet, boards_manifest, dbg, a.boards,
+                                       f"{a.label or 'build'}: KiCad render on the STL board slab, red = STL footprint outline, IoU top / bottom")
+    elif a.boards_report or a.boards_sheet:
+        print("pack_mesh: --boards-report and --boards-sheet need --boards; ignored")
+    screens, screen_images = load_screens(a.screens) if a.screens else ([], {})
 
     # ---- overlays: copied beside the payload, listed by name in mesh.json
     pcb_names = [copy_overlay(p, out, "pcb") for p in a.pcb]
@@ -211,7 +300,8 @@ def main(argv=None):
 
     manifest = dict(origin=[float(v) for v in lo], scale=[float(v) for v in scale], parts=parts,
                     totals=pj.get("totals"), frame=pj.get("frame") or "model frame: X forward, Y left, Z up, mm",
-                    note=pj.get("note"), source=pj.get("source"), build=a.label,
+                    note=pj.get("note"), source=pj.get("source"), build=a.label, title=cfg["title"],
+                    boards=boards_manifest, board_images=board_images, screens=screens, screen_images=screen_images,
                     n_new=sum(1 for p in parts if p["new"]), n_changed=sum(1 for p in parts if p["changed"]))
     mj = json.dumps(manifest, separators=(",", ":")).encode("utf-8")
     bin_path = os.path.join(out, "mesh.bin")
@@ -234,10 +324,13 @@ def main(argv=None):
         with open(os.path.join(out, f"mesh_{k}.json"), "w", encoding="ascii") as fh:
             fh.write('{"b64":"' + base64.b64encode(piece).decode("ascii") + '"}')
     with open(os.path.join(out, "mesh.json"), "w", encoding="utf-8") as fh:
-        json.dump(dict(chunks=len(pieces), bytes=len(raw), build=a.label, about=a.about,
+        json.dump(dict(chunks=len(pieces), bytes=len(raw), build=a.label, about=a.about, title=cfg["title"],
+                       boards=sum(1 for e in boards_manifest if e.get("textured")), screens=len(screens),
                        pcb=pcb_names, harness=harness_name), fh)
-    print(f"pack_mesh: mesh.json chunks {len(pieces)}; overlays pcb={pcb_names} harness={harness_name}")
-    print(f"pack_mesh: view with  python {os.path.join(HERE, 'serve.py')} --mesh {out}")
+    print(f"pack_mesh: mesh.json chunks {len(pieces)}; overlays pcb={pcb_names} harness={harness_name}; "
+          f"boards textured {sum(1 for e in boards_manifest if e.get('textured'))}/{len(boards_manifest)}; screens {len(screens)}"
+          f"{'; skipped by config ' + str(len(skipped_names)) if skipped_names else ''}")
+    print(f"pack_mesh: view with  python {os.path.join('tools', 'cad_viewer', 'serve.py')} --mesh {out}")
     return 0
 
 

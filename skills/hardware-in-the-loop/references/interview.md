@@ -43,6 +43,7 @@ The answers become `answers.json`, which `scripts/scaffold.py` turns into the pr
 | 15 | Machine limits | CPU cap for starting jobs / RAM to keep free for the system / free disk floor | 90 % / 4 GB / 50 GB |
 | 16 | Archive location for big results | a large drive path (videos and sim outputs are never deleted) | a folder on the largest non-system drive |
 | 16b | Storage layout | **repo on an NVMe / SSD, `.archive` a junction or symlink to the big disk** / everything on one disk | the recommended layout: builds, CAD and the engines are I/O bound, and a complex project collects hundreds of GB of traces, renders, videos and datasets in a few weeks. Make the link at once: `mklink /J .archive "<archive path>"` (Windows cmd) or `ln -s <archive path> .archive` |
+| 16c | Web CAD viewer | **copy the viewer into the project** / leave it out | copy it: section planes with a stepper, X-ray, PCB X-ray with the KiCad render on each board, Wire X-ray, mass and CG of the visible parts, review notes the next agent reads. It is a local tool (`windows/cad_viewer.ps1`); KiCad and Pillow are only needed for board pictures. Leave it out only for a project with no CAD |
 
 ## Batch 5: how to run the agents (state the cost before asking)
 
@@ -108,6 +109,7 @@ thermal limits and ambient range (the `hot_ambient` style scenarios run at the t
 | `build_spec` (optional) | list of text, one per answered row | 20-27 |
 | `work_style` (optional) | list of text | 14b, 28-32 |
 | `storage` (optional) | text | 16b |
+| `cad_viewer` (optional) | `true` / `false`; default true, `false` skips `tools/cad_viewer/` and `windows/cad_viewer.ps1` | 16c |
 
 Answers to questions 8, 11 and 12 go into `decisions` and into the decision table of `pcb/DESIGN_STANDARDS.md`.
 `scripts/scaffold.py` turns `decisions`, `build_spec`, `work_style`, `firmware_language` and `storage` into the

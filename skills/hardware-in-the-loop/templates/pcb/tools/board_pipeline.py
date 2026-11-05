@@ -16,15 +16,16 @@
 
      1. design checks: every pin number exists on the footprint and vice versa, no single-pin nets, every part placed
      2. board library: every footprint copied into the board's OWN <lib>.pretty (stock ones localized with their
-        silkscreen moved to the fab layers; custom ones written from pad tables)
+        outline silkscreen moved to the fab layers and their reference kept on silk; custom ones written from pad tables)
      3. schematic + project symbol library + project lib tables, written from the data (label style, deterministic)
      4. ERC with kicad-cli (all severities, JSON): 0 errors / 0 warnings or the run stops
      5. the board with pcbnew: outline, footprints from the board library, nets, holes, rules, net classes
      6. placement DRC (courtyards, edge clearance, parity) before any routing, so a bad placement stops early
      7. routing: Freerouting 2.1 headless (Specctra DSN -> SES), BelowNormal priority, capped threads, off the home dir
      8. router remnant clean-up with KiCad's own dangling-track test, repeated until a round removes nothing
-     9. copper pours + stitching vias + zone fill
-    10. final DRC with schematic parity, all severities, KiCad DEFAULT severities (no rule is ever demoted here)
+     9. copper pours + stitching vias + zone fill, then place_labels.py puts every reference designator on the silkscreen
+    10. final DRC with schematic parity, all severities, KiCad DEFAULT severities (no rule is ever demoted here);
+        silk_overlap, silk_over_copper and silk_edge_clearance fail the gate by name
     11. live distributor verification of every purchased line (distributor_verify.py): code must resolve to the MPN
     12. fab set (Gerbers, Excellon, CPL, BOM in JLCPCB assembly format, zip), STEP, CAD fit JSON, results JSON with
         every count and the SHA-256 of every fab file. Fab files are written ONLY when 4, 10 and 11 are clean.
@@ -42,8 +43,8 @@
 
  Hard lessons baked in (see docs/PCB.md)
    * Never Remove() a footprint's graphic items through pcbnew: freeing a C++ object under a live SWIG wrapper corrupts
-     KiCad's heap, and later FootprintLoad calls return bare SwigPyObjects. Silkscreen is moved to the fab layer in the
-     .kicad_mod TEXT before loading. The only Remove() calls here delete router remnant tracks / vias, and they run
+     KiCad's heap, and later FootprintLoad calls return bare SwigPyObjects. Part-outline silkscreen is moved to the fab layer in the
+     .kicad_mod TEXT before loading (the reference designator stays on silk). The only Remove() calls here delete router remnant tracks / vias, and they run
      after the last FootprintLoad of the process, with a fresh track list every round and no wrapper kept afterwards.
    * Pass the layer argument to PCB_VIA width calls: the layer-less overloads raise an assert dialog in debug-assert
      builds, which hangs a headless run forever.
@@ -139,6 +140,10 @@ JLC_RULES = {
     "default_track": 0.25,  # default net class track width
     "default_clearance": 0.2,
 }
+
+
+# KiCad DRC types for silkscreen; any of them fails the gate
+SILK_DRC_TYPES = ("silk_overlap", "silk_over_copper", "silk_edge_clearance")
 
 
 class PipelineError(SystemExit):
@@ -471,7 +476,7 @@ class Board:
     #  Step 1-2: board library + design checks
     # =================================================================================================================
     def write_library(self) -> dict:
-        """Copy every stock footprint into the board library (silk -> fab) and write every custom one."""
+        """Copy every stock footprint into the board library (part outlines silk -> fab, reference designators stay on silk) and write every custom one."""
         os.makedirs(self.pretty, exist_ok=True)
         written = {}
         for p in self.parts:
@@ -505,7 +510,19 @@ class Board:
         with open(src, encoding="utf-8") as fh:
             txt = fh.read()
         # ---- text edit, never a pcbnew Remove(): see the module docstring (heap corruption under live wrappers)
-        txt = txt.replace('(layer "F.SilkS")', '(layer "F.Fab")').replace('(layer "B.SilkS")', '(layer "B.Fab")')
+        # ---- part outlines go to fab; the Reference property stays on silk, place_labels.py positions it at the end of the run
+        ref_at = txt.find('(property "Reference"')
+        if ref_at >= 0:
+            depth, ref_end = 0, ref_at
+            for ref_end in range(ref_at, len(txt)):
+                depth += (txt[ref_end] == "(") - (txt[ref_end] == ")")
+                if depth == 0:
+                    break
+            ref_block = txt[ref_at:ref_end + 1]
+        else:
+            ref_block = ""
+        moved = lambda s: s.replace('(layer "F.SilkS")', '(layer "F.Fab")').replace('(layer "B.SilkS")', '(layer "B.Fab")')  # noqa: E731
+        txt = moved(txt[:ref_at]) + ref_block + moved(txt[ref_at + len(ref_block):]) if ref_block else moved(txt)
         dst = os.path.join(self.pretty, f"{name}.kicad_mod")
         with open(dst, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(txt)
@@ -519,7 +536,7 @@ class Board:
                 "board_only": "(attr board_only exclude_from_pos_files exclude_from_bom)"}.get(spec["attr"], "(attr smd)")
         out = [f'(footprint "{_esc(name)}"', '\t(version 20260206)', '\t(generator "board_pipeline")', '\t(layer "F.Cu")',
                f'\t(descr "{_esc(spec["descr"])}")',
-               f'\t(property "Reference" "REF**" (at 0 {_f(-ch / 2 - 1)} 0) (layer "F.Fab") (effects (font (size 0.8 0.8) (thickness 0.12))))',
+               f'\t(property "Reference" "REF**" (at 0 {_f(-ch / 2 - 1)} 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))',
                f'\t(property "Value" "{_esc(name)}" (at 0 {_f(ch / 2 + 1)} 0) (layer "F.Fab") (effects (font (size 0.8 0.8) (thickness 0.12))))',
                "\t" + attr,
                f'\t(fp_rect (start {_f(-bw / 2)} {_f(-bh / 2)}) (end {_f(bw / 2)} {_f(bh / 2)}) (stroke (width 0.1) (type solid)) (fill no) (layer "F.Fab"))',
@@ -952,6 +969,15 @@ class Board:
             d["warnings"] -= dangling
             d["types"].pop("warning/via_dangling")
             d["expected_before_pours"] = {"via_dangling": dangling}
+        # ---- reference designators have no position until place_labels.py runs at the end of the board, so their silk
+        #      hits are set aside here and counted again, by name, in the final DRC gate (nothing is moved to pass them)
+        early = {k: v for k, v in d["types"].items() if k.split("/")[-1] in SILK_DRC_TYPES}
+        if early:
+            d["warnings"] -= sum(v for k, v in early.items() if k.startswith("warning/"))
+            d["errors"] -= sum(v for k, v in early.items() if k.startswith("error/"))
+            for k in early:
+                d["types"].pop(k)
+            d["expected_before_labels"] = early
         self.res["steps"]["placement_drc"] = d
         self._log(f"placement DRC errors {d['errors']} warnings {d['warnings']} parity {d['parity']} (unconnected {d['unconnected']} before routing)")
         if d["errors"] or d["warnings"] or d["parity"]:
@@ -961,6 +987,27 @@ class Board:
     # =================================================================================================================
     #  Step 7-8: routing and remnant clean-up
     # =================================================================================================================
+    def place_labels(self) -> None:
+        """
+        Last board step, after routing and the fill: place_labels.py positions every reference designator on the
+        silkscreen beside its part. It runs as its own process (own pcbnew session) on the saved board file, which is
+        why it needs the file saved first; nothing after it writes the board. A non-zero exit means labels still
+        overlap at the smallest size; the final DRC then reports them, so the run is not stopped here.
+        """
+        pcb_path = os.path.join(self.kdir, f"{self.name}.kicad_pcb")
+        helper = os.path.join(os.path.dirname(os.path.abspath(__file__)), "place_labels.py")
+        if not os.path.isfile(helper):
+            raise PipelineError(f"{self.name}: {helper} is missing")
+        r = subprocess.run([sys.executable, helper, pcb_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+        lines = [ln for ln in (r.stdout or "").splitlines() if ln.startswith(("place_labels:", "  "))]
+        with open(os.path.join(self.kdir, "place_labels.log"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(r.stdout or "")
+            fh.write(r.stderr or "")
+        self.res["steps"]["labels"] = {"exit": r.returncode, "summary": lines[-1] if lines else ""}
+        self._log(f"labels: {lines[-1] if lines else 'no output'} (exit {r.returncode})")
+        if r.returncode == 2:
+            raise PipelineError(f"{self.name}: place_labels could not process the board: {(r.stderr or r.stdout or '')[-300:]}")
+
     def route(self, reroute: bool = False) -> dict:
         """
         Freerouting 2.1 on the Specctra export, SES import. Stops with a clear message when the router is missing.
@@ -1224,12 +1271,18 @@ class Board:
                 stubs += self.clean_dangling(include_vias=True)
             self.res["steps"]["cleanup"] = {"removed_remnants": stubs, "pours": n_pours}
             self.save(fill=True)
+            self.place_labels()
             d = self._drc("final")
             total = max(1, sum(1 for net, m in self.nets.items() if len(m) >= 2))
             d["routed_pct"] = round(100.0 * (1 - min(d["unconnected"], total) / total), 1)
             self.res["steps"]["final_drc"] = d
             self._log(f"final DRC errors {d['errors']} warnings {d['warnings']} unconnected {d['unconnected']} parity {d['parity']}")
             drc_clean = not (d["errors"] or d["warnings"] or d["unconnected"] or d["parity"])
+            # ---- silk is named in the gate on its own: a label is never moved off the silkscreen to make these zero
+            silk_hits = {k: v for k, v in d["types"].items() if k.split("/")[-1] in SILK_DRC_TYPES}
+            if silk_hits:
+                drc_clean = False
+                self._log(f"silkscreen DRC not clean: {silk_hits}")
             # ---- live distributor check, then the fab set only if everything is clean
             rep = self.verify_parts(offline_ok=offline_ok)
             all_verified = rep["pass"] and rep["unverified"] == 0

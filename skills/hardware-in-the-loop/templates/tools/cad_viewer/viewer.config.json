@@ -1,0 +1,50 @@
+{
+  "_help": "The project's own facts for the CAD viewer. Keys that start with an underscore are comments. Every key below is optional; leave a key out and the generic default applies. Check the file with: python tools/cad_viewer/viewer_config.py",
+
+  "title": "CAD viewer",
+
+  "_skip_parts": "Regexes (case-insensitive). A part whose name matches is left out of the pack, so it is also left out of the viewer's mass and CG. Use it for scratch bodies and construction geometry.",
+  "skip_parts": [],
+
+  "_look": "Project rules for how a part looks, tried in order BEFORE the built-in material rules. A rule matches when every regex it names matches. 'text' is searched in '<name> <material>'. Classes: coat, fr4, copper, alu, ti, steel, print, cf, soft, film, glass, wire, plain.",
+  "_look_example": [
+    {"class": "alu", "material": "^6061"},
+    {"class": "soft", "name": "^gasket_"},
+    {"class": "wire", "text": "harness|awg"}
+  ],
+  "look": [],
+  "look_defaults": true,
+
+  "_coat_prefix": "A conformal-coat shell is a part named <prefix><board part>. The shell renders clear so the board picture shows through it. Empty string = no coat parts.",
+  "coat_prefix": "coat_",
+
+  "_board_name_regex": "Parts whose name matches count as boards for PCB X-ray (solid while everything else turns to glass), with or without a KiCad file.",
+  "board_name_regex": "pcb|pcba|_board|_fr4",
+
+  "_wire_name_regex": "Parts whose name matches count as wires for Wire X-ray (wires, cables, flex tails and harness ties solid, everything else glass). Part names are project-specific, so tune this to yours. wire_not_regex removes false hits such as screws and clamps whose names contain a wire word.",
+  "_wire_example": {"wire_name_regex": "^harness_|_lead_|^cable_|_ffc$", "wire_not_regex": "screw|insert|clamp"},
+  "wire_name_regex": "^harness_|wire|cable|awg|pigtail|coax|_ffc|fpc_tail|flex_tail|(^|_)leads?(_|$)",
+  "wire_not_regex": "screw|insert|clamp|bolt|nut",
+
+  "_boards": "CAD part name -> the repo-relative .kicad_pcb it was built from. render_boards.py renders each file once (top and bottom); pack_mesh.py lays the picture on the part only if the outline size and the silhouette match. Parts of the same file share one render.",
+  "_boards_example": {
+    "main_board_pcba": "pcb/main/kicad/main.kicad_pcb",
+    "power_board_pcba": "pcb/power/kicad/power.kicad_pcb"
+  },
+  "boards": {},
+
+  "_board_no_file": "Board-like parts that have no KiCad file. They are listed in the pack as untextured, with the reason, so nobody wonders why a board is plain.",
+  "_board_no_file_example": [
+    {"name": "^spacer_board$", "reason": "mechanical spacer card, builder box only"}
+  ],
+  "board_no_file": [],
+
+  "_board_frames": "Optional. The CAD builder's own rule for how a board picture sits on its part: 'u' is the image-right axis, 'n' the normal of the KiCad top face, both in the model frame. It wins when it is as good a silhouette fit as the best one; a frame the STL contradicts is reported and the silhouette pick stays.",
+  "_board_frames_example": {
+    "main_board_pcba": {"u": [1, 0, 0], "n": [0, 0, 1], "source": "builder rule: KiCad +x = model +x"}
+  },
+  "board_frames": {},
+
+  "_board_gate": "Gates a render must pass before it is laid on a part: outline size error per side (absolute mm and fraction, the larger counts), silhouette IoU, and the score distance under which two placements count as a tie (a symmetric board).",
+  "board_gate": {"size_abs_mm": 0.8, "size_rel": 0.025, "min_iou": 0.90, "tie": 0.004}
+}

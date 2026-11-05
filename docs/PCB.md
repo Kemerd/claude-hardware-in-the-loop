@@ -50,8 +50,8 @@ red run still says exactly why.
   output is `power_out`, its input `power_in`; a net with `power_in` pins and no `power_out` pin gets a `PWR_FLAG`
   automatically (step 3). Unused pins get a no-connect flag; their pads get KiCad's `unconnected-(<ref>-<pin>-Pad<n>)` net
   so schematic parity agrees.
-- **Every footprint lives in the board's own library.** Stock footprints are copied in with their silkscreen moved to
-  the fab layers (a text edit of the `.kicad_mod`, never a pcbnew `Remove()`, see the lessons). Custom footprints are
+- **Every footprint lives in the board's own library.** Stock footprints are copied in with their part outlines moved to
+  the fab layers and their reference designator kept on silk (a text edit of the `.kicad_mod`, never a pcbnew `Remove()`, see the lessons). Custom footprints are
   written from the vendor's land-pattern table with `Board.custom_footprint()`: the WHOLE land pattern of the real
   package, never a reduced-pin stand-in that "fits for now". The project `fp-lib-table` lists only the board library, so a
   board never depends on what happens to be installed on a machine.
@@ -91,6 +91,26 @@ best. Never let it run out a long time limit for the sake of finishing.
 looked fine. One render showed why: big connectors sat in the middle of the board, walling off the routing and covering
 the spots where one chip's decoupling belonged, and the JST housings took a large share of the courtyard. The numbers had
 not shown any of that.
+
+## Board look
+
+A board is a product people open. Reference designators (R1, R2, C2, C43 ...) are useful on the bench, so they stay, and
+they are made to look tidy rather than removed.
+
+- **Labels are kept.** Every reference designator sits on F.SilkS / B.SilkS. Part outlines go to the fab layer; the
+  label does not. Board-only items (mounting holes) carry none.
+- **A script places them.** `pcb/tools/place_labels.py <board.kicad_pcb>` runs at the end of a board, after routing, and
+  the final DRC gate fails on `silk_overlap`, `silk_over_copper` and `silk_edge_clearance` by name. The placer
+  (`silk_solver.py`, numpy only) tries every free spot around each part, in both rotations, and keeps each label as near
+  its part as the neighbours allow.
+- **One size per board, the largest that fits.** Stroke is fixed at 0.17 mm, letters are 0.7 of their height wide, and
+  the height is the largest of 1.0 .. 0.6 mm that leaves no overlap (found by bisection). A roomy board keeps big text, a
+  dense one shrinks. The project's `min_text_height` follows. Under 0.8 mm text may print soft: check the fab's preview.
+- **Never move a label off silk to pass a check.** That is removing the label, not fixing the overlap (lesson 45).
+- **No model looks at a board for this.** The script measures; a person (or the DRC) judges the result. Nothing here
+  spends tokens on screenshots.
+- **Setup.** KiCad's python has numpy but not shapely. Install it with
+  `"C:\Program Files\KiCad.0in\python.exe" -m pip install --target <dir> shapely` and set `HIL_KICAD_SITE=<dir>`.
 
 ## 3. Freerouting setup and flags
 

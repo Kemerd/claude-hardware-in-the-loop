@@ -93,10 +93,14 @@ Write the decision into the builder's `DESIGN` dict so it travels with the geome
 
 ## 7. Viewing and review
 
-The web viewer (`viewer/`) shows a builder export with section planes, x-ray, a parts list by mass, a live mass / CG
-panel of the visible parts, a materials panel, a PCB overlay (from `pcb_to_json.py`) and a harness overlay (wire runs as
-tubes with zip-tie points). `serve.py` adds review notes pinned on parts, stored in `docs/cad_feedback/notes.jsonl`
-for the next agent to read. See [viewer/README.md](../viewer/README.md).
+The web viewer is a template the scaffold copies into the project as `tools/cad_viewer/` (with `windows/cad_viewer.ps1`
+to pack and serve it). It shows a builder export with section planes (value field, stepper, wheel: 0.1 mm, Shift 1 mm,
+Alt 0.01 mm), x-ray, PCB X-ray (boards solid with their KiCad render, everything else glass), Wire X-ray, a parts list by
+mass, a live mass / CG panel of the visible parts, a materials panel with per-part material looks, display-surface
+pictures, a PCB overlay (from `pcb_to_json.py`) and a harness overlay (wire runs as tubes with zip-tie points).
+`serve.py` adds review notes pinned on parts, stored in `docs/cad_feedback/notes.jsonl` for the next agent to read.
+Everything project-specific (which part is which KiCad board, parts to skip, material rules, the wire name pattern) sits
+in `tools/cad_viewer/viewer.config.json`. See [the viewer README](../skills/hardware-in-the-loop/templates/tools/cad_viewer/README.md).
 
 ## 8. Running CAD safely
 

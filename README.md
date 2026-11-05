@@ -212,7 +212,7 @@ skills/hardware-in-the-loop/
   scripts/       scaffold.py (writes the skeleton), setup_tools.ps1 / setup_tools.sh (pinned toolchain),
                  check_twin_tools.ps1 (finds CMake, compilers, Unreal >= 5.8.4, Isaac Sim, CUDA)
   templates/     the project skeleton (see below)
-viewer/          three.js CAD viewer: packer, local server with review notes, PCB-to-JSON exporter
+                 (the three.js CAD viewer is a template too: templates/tools/cad_viewer, copied by the scaffold)
 media/out/       the README graphics and the explainer video
 ```
 
@@ -248,13 +248,13 @@ media/out/       the README graphics and the explainer video
 
 </details>
 
-### The viewer (`viewer/`)
+### The viewer (`tools/cad_viewer/` in a scaffolded project)
 
-`pack_mesh.py` packs a builder export into a compact payload, `serve.py` serves it locally with a review-notes API
+The scaffold copies it from `templates/tools/cad_viewer/` with `windows/cad_viewer.ps1`; the interview offers it. `pack_mesh.py` packs a builder export into a compact payload, `serve.py` serves it locally with a review-notes API
 (notes pinned on parts land in a JSONL file the next agent reads), `index.html` is a single-page three.js viewer:
-section planes, x-ray, parts list by mass, a live mass / CG panel of the visible parts with a CG marker, a materials
+section planes with a stepper (0.1 mm, Shift 1 mm, Alt 0.01 mm), x-ray, PCB X-ray (boards solid with their KiCad render), Wire X-ray, parts list by mass, a live mass / CG panel of the visible parts with a CG marker, a materials
 panel, a PCB overlay from `pcb_to_json.py` (outline, courtyards per side, mounting holes), and a harness overlay (wire
-runs as tubes with zip-tie points and run lengths). See [viewer/README.md](viewer/README.md).
+runs as tubes with zip-tie points and run lengths). Project facts live in one `viewer.config.json`; KiCad and Pillow are optional, a mesh-only build comes up without them. See the [viewer README](skills/hardware-in-the-loop/templates/tools/cad_viewer/README.md).
 
 ## Implemented vs roadmap
 

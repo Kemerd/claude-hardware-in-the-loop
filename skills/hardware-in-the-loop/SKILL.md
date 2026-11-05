@@ -34,7 +34,7 @@ printed material (carbon-fibre nylon / PETG / PLA / machined aluminium), fasteni
 through-bolts), enclosure (sealed / vented / open), mechanical clearance, PCB fab and assembly vendor, MCU family, main
 supply and worst transient, board class and coating, simulation tiers (native twin / Isaac Sim / Unreal) and the GPU,
 machine limits (CPU cap default 90 %, RAM kept free for the system default 4 GB, free-disk floor default 50 GB),
-archive location, usage tripwire (default 95 %), standing decisions.
+archive location, the web CAD viewer (copy it into the project, default yes), usage tripwire (default 95 %), standing decisions.
 
 Then batch 6 (the build spec: environment, temperature range, IP rating and cooling, standards such as IPC class or
 MIL-STD-810H / 461G, wire such as SAE AS22759 "Tefzel", EMC, vibration, derating headroom) and batch 7 (how the
@@ -62,8 +62,8 @@ python -I <skill>/scripts/scaffold.py --answers <repo>/.tmp/answers.json --dest 
 ```
 
 It copies `templates/` (README_AGENT.md, PROJECT_STRUCTURE.md, REQUIREMENTS.md, README.md, CODING_RULES.md,
-`.gitignore`, `.gitattributes`, `windows/ci.ps1` + `windows/ci/` (groups `audit` and `pcb`), `tools/` (audit +
-portability with an empty tracked baseline and waiver file), `pcb/` (DESIGN_STANDARDS.md, `tools/kicad_env.py`,
+`.gitignore`, `.gitattributes`, `windows/ci.ps1` + `windows/ci/` (groups `audit` and `pcb`), `windows/cad_viewer.ps1`, `tools/` (audit +
+portability with an empty tracked baseline and waiver file; `tools/cad_viewer/`, the web CAD viewer, unless the interview said no), `pcb/` (DESIGN_STANDARDS.md, `tools/kicad_env.py`,
 `tools/board_pipeline.py`, `tools/distributor_verify.py`), `cad/` (`cad_plugins.py`, `render.py`, `mass_cg_table.py`),
 `firmware/host_tests/hil_check.h`, `docs/bench/BENCH_REGISTER.md`, `docs/data/README.md`, `harness/swarm/` (AGENT_RULES,
 slot / detach / watch / merge lock / merge-to-dev / promote / WIP backup / handoff hook / status line scripts) and
@@ -196,13 +196,29 @@ Follow `references/twin-setup.md`. In short:
 - `CITATION.md`: every model, constant and algorithm with a verified source (`ci.ps1 -Only citations`).
 - `.archive/`: results leave `.tmp/` only through `tools/archive_tmp.py` (hash-checked, with a manifest).
 
+## 7d. Looking at the CAD (the viewer)
+
+The scaffold copies the web CAD viewer to `tools/cad_viewer/` and its launcher to `windows/cad_viewer.ps1`; it is a
+template, so the project owns its copy and fixes go back into the skill. Use it whenever someone must look at a build:
+after a CAD change lands, before a fit decision, when the owner asks "can I see it".
+
+1. Fill `tools/cad_viewer/viewer.config.json` once: the part-to-`.kicad_pcb` map, the parts to skip, material rules, the wire
+   name pattern. Check it with `python tools/cad_viewer/viewer_config.py`. Nothing else in the viewer is project-specific.
+2. `pwsh -File windows/cad_viewer.ps1 pack <build dir> "<label>"` then `... start`. The build dir is what the builder
+   writes (`parts.json` + `stl/`); see `tools/cad_viewer/README.md`.
+3. Board pictures are optional: `render_boards.py` (KiCad 10, Pillow) then `pack ... --boards <dir>`. A mesh-only build
+   needs neither and still comes up. Section planes step 0.1 mm (Shift 1 mm, Alt 0.01); PCB X-ray and Wire X-ray isolate
+   boards and wires.
+4. Notes the owner pins land in `docs/cad_feedback/notes.jsonl`: read them before the next build and answer each.
+
 ## 8. Discipline (both modes)
 
-- PCB: generator-first (`docs/PCB.md`). ERC 0/0, DRC 0 violations / 0 unconnected / 0 parity at default severities,
+- PCB: generator-first (`docs/PCB.md`). ERC 0/0, DRC 0 violations / 0 unconnected / 0 parity at default severities (with planes refilled, on the first routed board too; high-voltage nets get their own router clearance, `docs/LESSONS.md` 44),
   every purchased line verified live, fab set + STEP + results JSON with SHA-256s. Hand placement by you is expected
   when the auto-placer fails. More layers are allowed; report the price delta. Relaxing a rule needs a cited basis.
 - CAD: builders + plug-ins; a mass / station / CG table (`cad/mass_cg_table.py`) with every part change; fit and clash
-  PNGs (`cad/render.py`) in `docs/cad_decisions/<date>/<topic>/`.
+  PNGs (`cad/render.py`) in `docs/cad_decisions/<date>/<topic>/`; a clearance check for a moving part uses exact solids
+  (lift in steps, intersect, report overlap volume) and has its own results row, never sampled surface points (`docs/LESSONS.md` 43).
 - Firmware: C (no interpreter in shipped firmware), out-of-tree builds, host suites with `hil_check.h`, scenarios
   through the real interface, seed sweeps, determinism; hardware-pending listed.
 - Twin: every model cited and tested against a closed form; no Python physics; the same seed gives the same trace.

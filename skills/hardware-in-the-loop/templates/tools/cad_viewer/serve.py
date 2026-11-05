@@ -25,9 +25,9 @@
    Nothing is rewritten in place, so a crash mid-write can at worst lose the last line.
 
  Interpreter: python 3.9+ (stdlib only)
- Run: python viewer/serve.py --mesh <pack_mesh out dir> [--notes <file.jsonl>] [--port 8765] [--host 127.0.0.1]
+ Run: python tools/cad_viewer/serve.py --mesh <pack_mesh out dir> [--notes <file.jsonl>] [--port 8765] [--host 127.0.0.1]
  Paths: command line (--mesh, --notes); the page and the default notes file resolve from __file__
-        (default notes: <folder above viewer/>/docs/cad_feedback/notes.jsonl)
+        (default notes: <repo>/docs/cad_feedback/notes.jsonl, two folders above this file)
 =======================================================================================================================
 """
 import argparse
@@ -49,8 +49,8 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-HERE = os.path.dirname(os.path.abspath(__file__))                       # viewer/
-REPO = os.path.abspath(os.path.join(HERE, ".."))                        # the repo the viewer sits in
+HERE = os.path.dirname(os.path.abspath(__file__))                       # <repo>/tools/cad_viewer
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))                  # the repo the viewer sits in
 DEFAULT_NOTES = os.path.join(REPO, "docs", "cad_feedback", "notes.jsonl")
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def _clean_view(v):
     hidden = v.get("hidden")
     if isinstance(hidden, list):
         out["hidden"] = [str(h)[:MAX_NAME] for h in hidden[:2000] if isinstance(h, str)]
-    for k in ("xray", "bright", "cg", "pcb", "harness"):
+    for k in ("xray", "pcbx", "bright", "cg", "pcb", "harness"):
         if k in v:
             out[k] = bool(v.get(k))
     return out or None

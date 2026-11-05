@@ -18,6 +18,7 @@
         pcb/example_board/ and cad/examples/ only with --with-examples
         sim/unreal/ only when sim_tiers names Unreal, sim/isaac/ only when it names Isaac (the native twin
         sim/twin/ and the firmware core are always copied: they are the first-class tier)
+        tools/cad_viewer/ and windows/cad_viewer.ps1 (the web CAD viewer) unless answers["cad_viewer"] is false
       an existing file is NEVER overwritten (it is listed as kept; compare by hand);
    3. fills the {{KEY}} template variables in Markdown files from the answers; any variable left unfilled is an
       error (exit 1) and the file is not written;
@@ -56,6 +57,8 @@ RENAMES = {
 EXAMPLE_DIRS = ("pcb/example_board", "cad/examples")
 # copied only when answers["sim_tiers"] mentions the keyword (case-insensitive)
 TIER_DIRS = {"sim/unreal": "unreal", "sim/isaac": "isaac"}
+# the web CAD viewer: copied unless answers["cad_viewer"] is false (a project with no CAD can leave it out)
+VIEWER_PATHS = ("tools/cad_viewer", "windows/cad_viewer.ps1")
 # never copied (caches a test run may have left in the template tree)
 SKIP_NAMES = {"__pycache__", ".tmp", ".pytest_cache"}
 SKIP_SUFFIX = (".pyc", ".kicad_prl")
@@ -86,6 +89,7 @@ SCHEMA = {
     "work_style": (False, "list"),
     "firmware_language": (False, "text"),
     "storage": (False, "text"),
+    "cad_viewer": (False, "bool"),
 }
 RANGES = {"cpu_max_pct": (10, 100), "ram_reserve_gb": (1, 512), "disk_free_min_gb": (1, 100000), "handoff_pct": (50, 101)}
 VAR_RE = re.compile(r"\{\{([A-Z_]+)\}\}")
@@ -113,7 +117,9 @@ def load_answers(path):
             if required:
                 problems.append(f"{key}: missing or empty")
             continue
-        if kind == "text" and not isinstance(v, str):
+        if kind == "bool" and not isinstance(v, bool):
+            problems.append(f"{key}: must be true or false")
+        elif kind == "text" and not isinstance(v, str):
             problems.append(f"{key}: must be text")
         elif kind == "int" and (isinstance(v, bool) or not isinstance(v, int)):
             problems.append(f"{key}: must be a whole number")
@@ -177,7 +183,7 @@ def fill(text, var, where):
     return VAR_RE.sub(lambda m: var[m.group(1)], text)
 
 
-def plan_files(with_examples, tiers=""):
+def plan_files(with_examples, tiers="", viewer=True):
     """[(template path, destination relative path)] for every file to copy."""
     out = []
     for dirpath, dirnames, filenames in os.walk(TEMPLATES):
@@ -192,12 +198,16 @@ def plan_files(with_examples, tiers=""):
                 continue
             if any((sub == t or sub.startswith(t + "/")) and k not in tiers.lower() for t, k in TIER_DIRS.items()):
                 continue
+            if not viewer and any(sub == v or sub.startswith(v + "/") for v in VIEWER_PATHS):
+                continue
             keep.append(d)
         dirnames[:] = sorted(keep)
         for name in sorted(filenames):
             if name.endswith(SKIP_SUFFIX):
                 continue
             rel = f"{rel_dir}/{name}" if rel_dir else name
+            if not viewer and rel in VIEWER_PATHS:
+                continue
             out.append((os.path.join(dirpath, name), RENAMES.get(rel, rel)))
     return out
 
@@ -223,7 +233,7 @@ def main(argv=None):
     written, kept, errors = [], [], []
     # ---- 1. render everything first, so a template error writes nothing at all
     jobs = []
-    for src, rel in plan_files(args.with_examples, a.get("sim_tiers", "")):
+    for src, rel in plan_files(args.with_examples, a.get("sim_tiers", ""), a.get("cad_viewer", True)):
         target = os.path.join(dest, *rel.split("/"))
         if os.path.exists(target):
             kept.append(rel)
@@ -280,6 +290,8 @@ def main(argv=None):
     skipped = [t for t, k in TIER_DIRS.items() if k not in a.get("sim_tiers", "").lower()]
     if skipped:
         print(f"[scaffold] tier folders not copied (sim_tiers does not name them): {', '.join(skipped)}")
+    if not a.get("cad_viewer", True):
+        print("[scaffold] web CAD viewer not copied (cad_viewer is false); copy templates/tools/cad_viewer and templates/windows/cad_viewer.ps1 later if wanted")
     for rel in written:
         print(f"  + {rel}")
     for rel in kept:

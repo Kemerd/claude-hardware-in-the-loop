@@ -10,7 +10,7 @@
 
  KiCad writes per-user settings, documents and caches the moment pcbnew is imported. This script points
  KICAD_CONFIG_HOME / KICAD_DOCUMENTS_HOME / KICAD_CACHE_HOME at a scratch folder BEFORE the import (default
- <folder above viewer/>/.tmp/kicad_home, or --kicad-home), so nothing lands in the user profile.
+ <repo>/.tmp/kicad_home, or --kicad-home), so nothing lands in the user profile.
 
  Output frame: board coordinates in mm, x right, y UP seen from the top (F.Cu) side (KiCad's y-down is flipped), origin
  at the centre of the board outline's bounding box (its KiCad position is kept as "origin_kicad_mm").
@@ -26,7 +26,7 @@
    "place" positions the board in the CAD model frame: the board's (0, 0) goes to origin_mm, it turns rot_deg about the
    model Z axis, and side_up says which copper side faces +Z.
 
- Usage: <kicad python> viewer/pcb_to_json.py <board.kicad_pcb> --out <board.json> [--place "x,y,z,rot_deg,top|bottom"]
+ Usage: <kicad python> tools/cad_viewer/pcb_to_json.py <board.kicad_pcb> --out <board.json> [--place "x,y,z,rot_deg,top|bottom"]
                                              [--kicad-home <dir>]
 =======================================================================================================================
 """
@@ -45,7 +45,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, ".."))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_KICAD_HOME = os.path.join(REPO, ".tmp", "kicad_home")
 
 

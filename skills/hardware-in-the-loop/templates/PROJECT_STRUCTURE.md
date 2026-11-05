@@ -38,8 +38,8 @@ every SHA-256, writes a `MANIFEST.json` (source, sizes, hashes, commit, date) an
 | `cad/` | CadQuery builders, one folder per assembly, each with `parts/` plug-ins and its exports (`<asm>_cad.json`, `parts.json`, `articulation.json`, `stl/`, `step/`) |
 | `pcb/` | one folder per board: its generator script, `kicad/` project, `fab/` set, results JSON; `tools/` (the shared pipeline); `DESIGN_STANDARDS.md` (the rule book) |
 | `docs/` | design notes, `bench/` (procedures + `BENCH_REGISTER.md`), `cad_decisions/<date>/<topic>/` (fit and clash PNGs with the decision note), `data/<topic>/<date>/` (tracked results), `datasheets/` |
-| `tools/` | repo-wide Python tooling: `audit_placeholders.py` (+ `audit_baseline.json`, `audit_waivers.json`), `check_portability.py`, `check_citations.py`, `archive_tmp.py` |
-| `windows/` | PowerShell entry points: `ci.ps1` and `ci/*.ps1` (one runner per CI group) |
+| `tools/` | repo-wide Python tooling: `audit_placeholders.py` (+ `audit_baseline.json`, `audit_waivers.json`), `check_portability.py`, `check_citations.py`, `archive_tmp.py`; `cad_viewer/` (the web CAD viewer: packer, server, KiCad board renders, `viewer.config.json` with the project's own part rules) |
+| `windows/` | PowerShell entry points: `ci.ps1` and `ci/*.ps1` (one runner per CI group), `cad_viewer.ps1` (pack, start, stop the viewer) |
 | `interfaces/` | the contracts between parts: pin maps, wire list, protocol notes |
 
 Root files: `README.md`, `README_AGENT.md`, `PROJECT_STRUCTURE.md`, `REQUIREMENTS.md`, `CODING_RULES.md`,
