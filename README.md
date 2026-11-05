@@ -190,6 +190,38 @@ Roles, waves, briefs, skeptics and the integrator are in [docs/SWARM.md](docs/SW
    your domain needs, and keep reviewing the CAD and the boards with the agent (ask why, ask for an adversarial pass)
    before anything goes to a fab.
 
+5. Stay current without giving up your changes. The skeleton is a starting point you are meant to rewrite, so it
+   carries its own updater. See [Update checks](#update-checks-what-they-do-and-how-to-turn-them-off) below.
+
+## Update checks: what they do and how to turn them off
+
+A scaffolded project checks this repository for a newer version when a Claude Code session starts. It is there so
+that improvements (a better board-layout prompt, a faster viewer, a fixed tool) reach projects that long ago
+customised every template. Leaving it on is a good idea: the tooling here is actively improved, by the maintainer and
+by community pull requests, and a check costs you nothing.
+
+What it does, in full:
+
+- **The check** (`tools/hil_update.py check`, run by a `SessionStart` hook) reads two small text files,
+  `VERSION` and `CHANGELOG.md`, from `raw.githubusercontent.com/Kemerd/claude-hardware-in-the-loop/main/`. It sends
+  nothing about you or your project, downloads no code, runs nothing it fetched, and happens at most once a day. If
+  you are offline it says nothing.
+- **If a newer version exists,** the agent tells you what is new in plain words and asks whether to pull it in. No
+  answer, or no, means nothing changes (and `ignore` stops that version being announced again).
+- **Only after you say yes** does `plan` download the repository's `main` archive from GitHub into the project's
+  `.tmp/` and compare it with your files. Nothing is installed or executed from it. `apply` copies in new template
+  files and refreshes files you never touched. A file you customised is **never overwritten**: you get a diff and the
+  agent merges it with you. The whole update lands as one git commit on its own branch, so you can read it and revert it.
+- The updater is one readable Python file with only the standard library: `tools/hil_update.py`. Read it before you trust it.
+
+To turn it off, any one of these:
+
+- set the environment variable `HIL_NO_UPDATE_CHECK=1` (the check exits at once, no network);
+- delete the `SessionStart` block from `.claude/settings.local.json`;
+- delete `tools/hil_update.py` and `harness/TEMPLATE_VERSION.json`.
+
+You can still update by hand at any time with `python -I tools/hil_update.py check --force`.
+
 ## What is in here
 
 ```

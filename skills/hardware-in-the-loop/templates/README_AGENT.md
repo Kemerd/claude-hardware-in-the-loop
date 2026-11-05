@@ -69,3 +69,30 @@ type harness\swarm\PLAN.md                         # the current plan and its "W
 dir harness\swarm\resume_*                         # newest resume documents first
 pwsh -File windows\ci.ps1 -Only audit              # a fast smoke test of the gates
 ```
+
+## 7. Staying current with the method (template updates)
+
+This project was scaffolded from the hardware-in-the-loop method (https://github.com/Kemerd/claude-hardware-in-the-loop).
+The method keeps improving (better board prompts, a newer viewer, fixed tools), and this project may have changed
+every template since. `harness/TEMPLATE_VERSION.json` records the version it came from and, per template file, what
+was shipped, so an update can tell files nobody touched from files the project made its own.
+
+- At session start the `SessionStart` hook runs `python -I tools/hil_update.py check`. It is silent when current
+  (one small request, at most once a day, offline is fine). When upstream is newer it prints `HIL_UPDATE_AVAILABLE`
+  and the changelog entries in between. No hook output and no stamp: run `python -I tools/hil_update.py adopt` once.
+- **Ask first, never update silently.** Tell the owner in plain lines what is new, taken from the changelog, for
+  example: "A new version of the method is on GitHub. New: a better PCB layout prompt, a faster CAD viewer.
+  Pulling it into this project takes about 30 seconds and never overwrites files you customised. Want it?"
+  Use the question dialog; the recommended answer is yes. On no: `python -I tools/hil_update.py ignore <version>`
+  (a newer version is announced again).
+- On yes, in a worktree on a fresh branch, never the owner's main checkout:
+  1. `python -I tools/hil_update.py plan` downloads upstream and sorts every template file: `new`, `update`
+     (untouched here, safe), `merge` (changed on both sides; diffs in `.tmp/hil_update/diff/`), nothing to do.
+  2. `python -I tools/hil_update.py apply` adds the new files, refreshes the untouched ones and bumps the stamp.
+  3. Merge each `merge` file by hand: read its diff, keep the project's customisations, take the upstream
+     improvement. A filled-in Markdown template (project name, decisions) keeps its own values. When unsure, ask.
+     Then `python -I tools/hil_update.py mark <files>`.
+  4. Run `pwsh -File windows/ci.ps1 -Only audit` and the groups the touched files belong to; commit as one change
+     ("Update method templates to <version>"); report what changed and what is left to decide.
+- If the skill itself is installed (`.claude/skills/hardware-in-the-loop`), refresh it from the same download
+  (`.tmp/hil_upstream`): copy `SKILL.md`, `references/`, `scripts/`, `VERSION` and `CHANGELOG.md` over it.
