@@ -21,7 +21,8 @@
      4. ERC with kicad-cli (all severities, JSON): 0 errors / 0 warnings or the run stops
      5. the board with pcbnew: outline, footprints from the board library, nets, holes, rules, net classes
      6. placement DRC (courtyards, edge clearance, parity) before any routing, so a bad placement stops early
-     7. routing: Freerouting 2.1 headless (Specctra DSN -> SES), BelowNormal priority, capped threads, off the home dir
+     7. routing: Freerouting 2.1 headless (Specctra DSN -> SES), BelowNormal priority, capped threads, off the home dir;
+        or, with Board(router="negotiated"), the negotiated router in route_board.py / pf_route.py / astar.c
      8. router remnant clean-up with KiCad's own dangling-track test, repeated until a round removes nothing
      9. copper pours + stitching vias + zone fill, then place_labels.py puts every reference designator on the silkscreen
     10. final DRC with schematic parity, all severities, KiCad DEFAULT severities (no rule is ever demoted here);
@@ -51,7 +52,7 @@
    * A child process with no log growth for HANG_S seconds is treated as hung and killed (by its exact PID only).
 
  Environment
-   HIL_FREEROUTING_JAR   path of the Freerouting 2.1 jar (required for boards with routing)
+   HIL_FREEROUTING_JAR   path of the Freerouting 2.1 jar (required for boards with routing, unless router="negotiated")
    HIL_JAVA              java 21 executable (default: JAVA_HOME/bin/java, then PATH)
    HIL_KICAD_*           see kicad_env.py
 
@@ -103,6 +104,7 @@ if TOOLS not in sys.path:
 import kicad_env           # noqa: E402
 kicad_env.isolate()
 import distributor_verify  # noqa: E402
+import route_board         # noqa: E402  (imports no pcbnew and no numpy until a route runs)
 
 try:
     import pcbnew          # noqa: E402  (KiCad python only)
@@ -254,7 +256,8 @@ class Board:
 
     def __init__(self, name: str, title: str, rev: str, out_dir: str, *, layers: int = 2, thickness: float = 1.6,
                  rules: dict | None = None, router_passes: int = 40, router_threads: int = 1,
-                 router_timeout_s: int = 1800, company: str = ""):
+                 router_timeout_s: int = 1800, company: str = "", router: str = "freerouting",
+                 router_config: dict | None = None):
         # ---- defensive argument checks: a garbled name would end up in file names and lib ids
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_\-]{0,40}", name or ""):
             raise PipelineError(f"board name {name!r}: letters, digits, '_' and '-' only, starting with a letter")
@@ -264,6 +267,8 @@ class Board:
             raise PipelineError(f"{name}: board thickness {thickness} mm is outside 0.4..3.2")
         if not (1 <= router_threads <= 4):
             raise PipelineError(f"{name}: router_threads must be 1..4 (the machine is shared)")
+        if router not in ("freerouting", "negotiated"):
+            raise PipelineError(f"{name}: router must be 'freerouting' or 'negotiated' (got {router!r})")
         self.name, self.title, self.rev, self.company = name, title, rev, company
         self.out = os.path.abspath(out_dir)
         self.lib = f"{name}_lib"                     # the board's own footprint + symbol library nickname
@@ -274,6 +279,7 @@ class Board:
         self.rules = dict(JLC_RULES)
         self.rules.update(rules or {})
         self.router_passes, self.router_threads, self.router_timeout_s = router_passes, router_threads, router_timeout_s
+        self.router, self.router_config = router, dict(router_config or {})     # the config keys are listed in route_board.py
         # ---- declared data
         self.parts: list[dict] = []
         self.custom_fps: dict[str, dict] = {}
@@ -1033,7 +1039,10 @@ class Board:
         with one thread (two runs of the example board gave two different, equally valid track sets), so committing the
         frozen SES with the generator is what makes the routed board and the fab files repeatable. A placement change
         that invalidates the frozen route shows up as unconnected items in the final DRC: rerun with `reroute`.
+        With router="negotiated" the same steps run through route_negotiated().
         """
+        if self.router == "negotiated":
+            return self.route_negotiated(reroute)
         frozen = os.path.join(self.out, f"{self.name}_route.ses")
         if os.path.isfile(frozen) and not reroute:
             if not pcbnew.ImportSpecctraSES(self.B, frozen):
@@ -1080,6 +1089,51 @@ class Board:
         shutil.copyfile(ses, frozen)                        # the frozen route: commit it with the generator
         info = {"router": "freerouting 2.1", "passes_max": self.router_passes, "threads": self.router_threads,
                 "seconds": round(time.monotonic() - t0, 1), "ses": os.path.basename(frozen), "ses_sha256": _sha256(frozen)}
+        self.res["steps"]["route"] = info
+        return info
+
+    def route_negotiated(self, reroute: bool = False) -> dict:
+        """
+        The negotiated router (route_board.py) in place of Freerouting: for the dense boards Freerouting leaves open.
+        Same frozen-route idea, as JSON: a closed run copies its new tracks and vias to <out>/<board>_route.json and later
+        runs replay that file. The router reads the board from a file, in its own process, so the board is saved first,
+        with its pours: that is how it learns the planes, and why run() adds them before routing in this mode.
+        An unfinished route stops the run here with its open nets; nothing falls back to another router.
+        """
+        frozen = os.path.join(self.out, f"{self.name}_route.json")
+        if os.path.isfile(frozen) and not reroute:
+            with open(frozen, encoding="utf-8") as fh:
+                route_board.apply_result(self.B, json.load(fh))
+            info = {"router": "frozen route JSON (no router run)", "route": os.path.basename(frozen), "route_sha256": _sha256(frozen)}
+            self.res["steps"]["route"] = info
+            return info
+        home = os.path.join(self.out, ".router")
+        os.makedirs(home, exist_ok=True)
+        pre, routed, picked = (os.path.join(home, f"{self.name}_{n}") for n in ("pre.kicad_pcb", "routed.kicad_pcb", "route.json"))
+        cfg_path = os.path.join(home, f"{self.name}_route_config.json")
+        with open(cfg_path, "w", encoding="utf-8", newline="\n") as fh:
+            json.dump(self.router_config, fh, indent=1)
+        if os.path.isfile(picked):
+            os.remove(picked)
+        if not pcbnew.SaveBoard(pre, self.B):
+            raise PipelineError(f"{self.name}: SaveBoard failed for {pre}")
+        cmd = [sys.executable, os.path.join(TOOLS, "route_board.py"), pre, "--out", routed, "--config", cfg_path, "--result", picked,
+               "--minutes", f"{self.router_timeout_s / 60.0:.1f}", "--no-drc"]
+        t0 = time.monotonic()
+        log = os.path.join(home, "negotiated.log")
+        rc = run_watched(cmd, log, cwd=home, timeout_s=self.router_timeout_s + 300)
+        rep_path = os.path.splitext(routed)[0] + "_route_report.json"
+        report = {}
+        if os.path.isfile(rep_path):
+            with open(rep_path, encoding="utf-8") as fh:
+                report = json.load(fh)
+        if rc != 0 or not os.path.isfile(picked):
+            raise PipelineError(f"{self.name}: negotiated router exit {rc}, open nets {[r['net'] for r in report.get('open_nets', [])][:12]}; see {log}")
+        with open(picked, encoding="utf-8") as fh:
+            route_board.apply_result(self.B, json.load(fh))
+        shutil.copyfile(picked, frozen)                     # the frozen route: commit it with the generator
+        info = {"router": "negotiated", "passes": report.get("passes", []), "seconds": round(time.monotonic() - t0, 1),
+                "route": os.path.basename(frozen), "route_sha256": _sha256(frozen)}
         self.res["steps"]["route"] = info
         return info
 
@@ -1257,7 +1311,7 @@ class Board:
         Command line of every board script:
           (none)        full run: steps 1-12
           place         stop after the placement DRC (fast iteration on placement)
-          reroute       run the router even when a frozen route (<board>_route.ses) exists
+          reroute       run the router even when a frozen route (<board>_route.ses, or .json with the negotiated router) exists
           --offline-ok  an unreachable distributor does not fail the run (fab files are still withheld)
         """
         argv = list(sys.argv[1:] if argv is None else argv)
@@ -1279,10 +1333,12 @@ class Board:
             if place_only:
                 verdict = "placed"
                 return 0
-            # ---- routing: the only step that needs Freerouting
+            # ---- routing: the only step that needs Freerouting. The negotiated router reads the planes off the board, so the pours go on first
+            n_pours = self.add_pours() if self.router == "negotiated" else 0
             self.route(reroute=reroute)
             stubs = self.clean_dangling()
-            n_pours = self.add_pours()
+            if self.router != "negotiated":
+                n_pours = self.add_pours()
             if n_pours:
                 pcbnew.ZONE_FILLER(self.B).Fill(self.B.Zones())
                 stubs += self.clean_dangling(include_vias=True)

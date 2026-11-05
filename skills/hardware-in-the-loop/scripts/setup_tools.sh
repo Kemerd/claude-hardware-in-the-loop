@@ -94,7 +94,7 @@ if ! skip cadquery; then
   vpy="$ROOT/cqv/bin/python"
   if [ ! -x "$vpy" ] && [ "$VERIFY" = 0 ]; then
     python3 -m venv "$ROOT/cqv" && PIP_CACHE_DIR="$ROOT/cache/pip" "$vpy" -m pip install --upgrade pip \
-      && PIP_CACHE_DIR="$ROOT/cache/pip" "$vpy" -m pip install cadquery trimesh matplotlib numpy pillow
+      && PIP_CACHE_DIR="$ROOT/cache/pip" "$vpy" -m pip install cadquery trimesh matplotlib numpy pillow scipy shapely
   fi
   if [ -x "$vpy" ] && cv="$("$vpy" -I -c 'import cadquery, trimesh; print(cadquery.__version__, trimesh.__version__)' 2>/dev/null)"; then
     say cadquery "ok cadquery/trimesh $cv ($vpy)"; ENVL="$ENVL

@@ -234,6 +234,7 @@ media/out/       the README graphics and the explainer video
 | `tools/audit_placeholders.py` + baseline / waivers JSON | no-shortcut audit: open-work markers, admitted guesses, Python stubs, hardware functions returning canned success, CAD stand-in names and bare primitives, default credentials; tracked baseline, signed waivers, `--changed-since` | implemented, tested |
 | `tools/check_portability.py` | interpreter line, UTF-8 console, path anchoring, no user-profile paths | implemented, tested |
 | `pcb/tools/kicad_env.py`, `board_pipeline.py`, `distributor_verify.py` | generator-first KiCad 10 pipeline: schematic from data, own footprint library, ERC, placement DRC, Freerouting, clean-up, pours, final DRC with parity, JLCPCB fab set, live LCSC verification, STEP, fit JSON, results JSON with SHA-256s | implemented, tested end to end |
+| `pcb/tools/route_board.py`, `pf_route.py`, `astar.c` | negotiated-congestion router for the dense boards Freerouting leaves open: reads pads, nets, rules, zones and keep-outs from the board, routes around copper already there, reports what stays open | implemented, tested on real boards stripped of their copper |
 | `pcb/example_board/gen_example_board.py` | a real 2-layer 3.3 V LDO breakout (TVS, PTC with sense line, redundant power / ground pins, every part behind the TVS rated above its clamp) | runs green in about 15 s |
 | `pcb/DESIGN_STANDARDS.md` | rule book skeleton with rule ids and a project decision table | ready (a machine checker for the rule ids is roadmap) |
 | `cad/cad_plugins.py`, `cad/render.py`, `cad/mass_cg_table.py` | plug-in loader, decision renders (clash in red, dimensions), weight-and-balance table | implemented, tested |
@@ -263,7 +264,7 @@ Nothing here is sold as done that is not. The right column is designed and writt
 | Area | Implemented | Roadmap |
 |---|---|---|
 | Gates | CI matrix, audit, portability, ERC / DRC re-check, regression compare | a standards checker that implements the DESIGN_STANDARDS rule ids |
-| PCB | full generator pipeline with Freerouting, live part verification, fab set, STEP | in-house completion router for fine-pitch escapes, BGA fan-out helpers, panelization |
+| PCB | full generator pipeline with Freerouting or the negotiated router, live part verification, fab set, STEP | BGA fan-out helpers, length matching, panelization |
 | CAD | plug-in contract, renders, mass / CG tables, example builder | interference check with exact contact areas, STEP-based catalogue part import |
 | Firmware | host check library, a C firmware core behind a HAL, the twin pattern, ESP32 / ESP32-P4 / ARM guidance | register-level device models and a lockstep RTOS shim for unmodified `main.c` (described in firmware-host.md) |
 | Simulation | native C twin with models, scenarios, seeds, determinism, Monte Carlo (CPU + CUDA); Unreal plugin with hash parity; Isaac Sim harness | ChaosTorque and Isaac runs validated on a project's own rig; rendered sensor models (cameras, depth); bench-versus-twin comparison tooling |

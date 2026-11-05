@@ -21,7 +21,7 @@
                         2026-11-03; a different file is deleted and the run fails
     OSS CAD Suite       <ToolsRoot>\oss-cad-suite-20261024\ (yosys, nextpnr, iverilog, verilator, openFPGALoader) from
                         the 2026-10-24 Windows x64 release: 604,518,009 bytes, SHA-256 checked before unpacking
-    CadQuery venv       <ToolsRoot>\cqv\ (python -m venv, then cadquery, trimesh, matplotlib, numpy, pillow) using a
+    CadQuery venv       <ToolsRoot>\cqv\ (python -m venv, then cadquery, trimesh, matplotlib, numpy, pillow, scipy, shapely) using a
                         pip cache under <ToolsRoot>\cache\pip
   At the end it writes <ToolsRoot>\hil_tools.env with the HIL_* variables the pipeline reads (HIL_FREEROUTING_JAR,
   HIL_JAVA, HIL_KICAD_CLI, HIL_CQ_PYTHON, HIL_OSSCAD) and prints how to load them.
@@ -48,7 +48,7 @@ $Pin = @{
   OscUrl    = 'https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-10-24/oss-cad-suite-windows-x64-20261024.tgz'
   OscSize   = 604518009
   OscSha    = '6b38c1a57a17d8432b3d58f63beaa4e7919dcb6c19f9fcb6ca043fe8cb1b2cf7'
-  CqPkgs    = @('cadquery', 'trimesh', 'matplotlib', 'numpy', 'pillow')
+  CqPkgs    = @('cadquery', 'trimesh', 'matplotlib', 'numpy', 'pillow', 'scipy', 'shapely')
 }
 
 # ---------------------------------------------------------------------------------------------------------------------

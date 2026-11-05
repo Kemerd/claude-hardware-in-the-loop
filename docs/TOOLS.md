@@ -19,7 +19,7 @@ SHA-256 hashes before using a download, and writes `<ToolsRoot>\hil_tools.env` w
 | Java | 21 (Temurin JRE) | Freerouting 2.x needs Java 21 | Program Files | `winget install EclipseAdoptium.Temurin.21.JRE` |
 | Freerouting | 2.1.0 jar, 66,978,394 bytes, SHA-256 `2c07d58f75dac03782664081e7a58b41c25400d871a9fcf166a2ea6fe60d5def` | autorouter (Specctra DSN in, SES out), run headless | `<ToolsRoot>\freerouting\` | downloaded from the GitHub release; upstream publishes no checksum, so the pin is the hash of the release asset computed on 2026-11-03 |
 | OSS CAD Suite | build 2026-10-24, Windows x64, 604,518,009 bytes, SHA-256 `6b38c1a57a17d8432b3d58f63beaa4e7919dcb6c19f9fcb6ca043fe8cb1b2cf7` | open FPGA flow: yosys, nextpnr, Icarus Verilog, Verilator, openFPGALoader (only when the project has an FPGA) | `<ToolsRoot>\oss-cad-suite-20261024\` | `https://github.com/YosysHQ/oss-cad-suite-build/releases/download/2026-10-24/oss-cad-suite-windows-x64-20261024.tgz`, hash checked before unpacking |
-| CadQuery venv | cadquery 2.x + trimesh, matplotlib, numpy, pillow | parametric CAD builders, STEP / STL export, renders | `<ToolsRoot>\cqv\` | `python -m venv` + pip, pip cache in `<ToolsRoot>\cache\pip` |
+| CadQuery venv | cadquery 2.x + trimesh, matplotlib, numpy, pillow, scipy, shapely | parametric CAD builders, STEP / STL export, renders; also a python the negotiated PCB router can use | `<ToolsRoot>\cqv\` | `python -m venv` + pip, pip cache in `<ToolsRoot>\cache\pip` |
 | Python | 3.10+ | tooling: audit, portability, renders, scaffold, viewer packer | system install | python.org or winget |
 | PowerShell | 7 (pwsh) | CI entry point and runners | Program Files | `winget install Microsoft.PowerShell` |
 | Git + Git Bash | current | worktrees, the harness scripts (bash) | Program Files | `winget install Git.Git` |
@@ -43,6 +43,10 @@ bitstream. Check each component's licence in the suite's `license/` folder again
 | `HIL_KICAD_HOME` | `kicad_env.py` | KiCad's per-user folders (default `<repo>/.tmp/kicad_home`) |
 | `HIL_FREEROUTING_JAR` | pipeline | the Freerouting jar; without it the pipeline stops before routing with a clear message |
 | `HIL_JAVA` | pipeline | Java 21 executable (falls back to `JAVA_HOME`, then `PATH`) |
+| `HIL_KICAD_SITE` | `place_labels.py`, `route_board.py`, `pf_route.py` | folder with the packages KiCad's python lacks (`pip install --target`): shapely for the labels, scipy and shapely for the router |
+| `HIL_ROUTER_PYTHON` | `route_board.py` | a python with numpy, scipy and shapely for the router's search (falls back to KiCad's python with `HIL_KICAD_SITE`, then `HIL_CQ_PYTHON`) |
+| `HIL_ROUTER_CACHE` | `pf_route.py` | where the compiled `astar.c` is kept (default `<repo>/.tmp/astar`) |
+| `CC` | `pf_route.py` | the C compiler to try first (then clang, gcc, cc, and cl on Windows) |
 | `HIL_CQ_PYTHON` | CI, docs | the CadQuery venv python |
 | `HIL_PYTHON` | CI | the python for the audit / portability suites |
 | `HIL_RAM_RESERVE_GB`, `HIL_CPU_MAX`, `HIL_START_GAP` | `slot.sh` | machine gate (defaults 4 GB, 90 %, 15 s; also from `harness/swarm/machine.env`) |

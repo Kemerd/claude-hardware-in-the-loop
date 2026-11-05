@@ -64,7 +64,7 @@ python -I <skill>/scripts/scaffold.py --answers <repo>/.tmp/answers.json --dest 
 It copies `templates/` (README_AGENT.md, PROJECT_STRUCTURE.md, REQUIREMENTS.md, README.md, CODING_RULES.md,
 `.gitignore`, `.gitattributes`, `windows/ci.ps1` + `windows/ci/` (groups `audit` and `pcb`), `windows/cad_viewer.ps1`, `tools/` (audit +
 portability with an empty tracked baseline and waiver file; `tools/cad_viewer/`, the web CAD viewer, unless the interview said no), `pcb/` (DESIGN_STANDARDS.md, `tools/kicad_env.py`,
-`tools/board_pipeline.py`, `tools/distributor_verify.py`), `cad/` (`cad_plugins.py`, `render.py`, `mass_cg_table.py`),
+`tools/board_pipeline.py`, `tools/distributor_verify.py`, `tools/route_board.py` + `pf_route.py` + `astar.c`, the negotiated router), `cad/` (`cad_plugins.py`, `render.py`, `mass_cg_table.py`),
 `firmware/host_tests/hil_check.h`, `docs/bench/BENCH_REGISTER.md`, `docs/data/README.md`, `harness/swarm/` (AGENT_RULES,
 slot / detach / watch / merge lock / merge-to-dev / promote / WIP backup / handoff hook / status line scripts) and
 `.claude/settings.local.json` (status line + PostToolUse hook)), fills the template variables, writes
@@ -149,7 +149,8 @@ Follow `harness/swarm/PLAN.md` (from `references/single-session-plan.md`):
 6. Stopping: append "## Where I stopped" (done with SHAs, running jobs with PIDs and logs, exact next step).
 
 When an auto-router or auto-placer gets stuck, in any mode, stop it and look: `docs/PCB.md`, "When the router gets
-stuck". Render the board with `pcb/tools/place_view.py`, read the picture, place by hand, then route again.
+stuck". Render the board with `pcb/tools/place_view.py`, read the picture, place by hand, then route again. A board Freerouting
+leaves open because it is dense, not because the placement is wrong, goes to the negotiated router: `docs/PCB.md`, section 3b.
 
 Lay a board out as named stages, not as whatever fits: a stage table before placement, one region per stage, parts beside the pins they serve, a box and title on silk for each stage. A subagent may get a rough first pass down, but no board routes or lands until a reviewer who is not its author has checked every part against the stages. `docs/PCB.md`, "Stages". Follow this as far as you can, not rigidly: a part that doesn't fit or a small add-on fix gets noted as an exception, and the board isn't redone for it. For each real stage, search published circuits before fixing the topology and compare them on cost, thermal, voltage and the like: that gets past the knowledge cutoff, and a published circuit is a floor, never a ceiling. A board that passes every check and can't be read isn't finished.
 

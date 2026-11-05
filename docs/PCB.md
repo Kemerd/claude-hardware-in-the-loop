@@ -11,6 +11,7 @@ Files (in the skill's templates, copied into a project as `pcb/`):
 | `pcb/tools/kicad_env.py` | finds KiCad, isolates its per-user folders, seeds minimal library tables, turns KiCad's git integration off |
 | `pcb/tools/board_pipeline.py` | the `Board` class: declaration API + the 12 pipeline steps |
 | `pcb/tools/distributor_verify.py` | live check that every distributor order code resolves to the MPN the schematic names |
+| `pcb/tools/route_board.py`, `pf_route.py`, `astar.c` | the negotiated router, for boards Freerouting leaves open (section 3b) |
 | `pcb/example_board/gen_example_board.py` | a real 2-layer 3.3 V LDO breakout that runs every step (about 20 s) |
 | `pcb/DESIGN_STANDARDS.md` | the rule book with rule ids (PROT-01, RED-01, FAB-02, ...) and the project decision table |
 
@@ -34,7 +35,7 @@ Files (in the skill's templates, copied into a project as `pcb/`):
 | 4 | ERC | `kicad-cli sch erc --severity-all` | any error or warning |
 | 5 | board: outline, footprints, nets, holes, design rules, net classes, stitching vias | pcbnew | a footprint does not load |
 | 6 | placement DRC (courtyards, edge clearance, parity) before any routing | `kicad-cli pcb drc --schematic-parity` | any violation or parity item |
-| 7 | routing | Freerouting 2.1 (Specctra DSN -> SES) | router missing, timeout, hang, failed import |
+| 7 | routing | Freerouting 2.1 (Specctra DSN -> SES), or the negotiated router with `Board(router="negotiated")` | router missing, timeout, hang, failed import; a negotiated route that stays open |
 | 8 | router remnant clean-up (KiCad's dangling-track test, repeated until stable) | pcbnew | |
 | 9 | copper pours + zone fill, then dangling vias | pcbnew | |
 | 10 | final DRC with schematic parity, all severities, KiCad default severities | `kicad-cli pcb drc` | any error / warning / unconnected / parity item |
@@ -178,6 +179,62 @@ java -Djava.io.tmpdir=<out>/.router -Duser.home=<out>/.router -Xmx2g -jar freero
 - Planes: give a pour net its own net class and let the pour connect it, or route it; the example routes everything and
   adds the GND pours afterwards.
 
+## 3b. The negotiated router
+
+A second router, for the boards Freerouting leaves open. A sequential router lays one net at a time, so a net routed early walls in the nets behind it. Here every net sees every other net's copper as a soft cost. Nets that collide are ripped up and routed again while the price of sharing a cell rises, and cells that keep being fought over stay dearer for good, until nobody shares copper. This is PathFinder (McMurchie and Ebeling, FPGA 1995). The search is a grid A* in C. `route_board.py` reads the board and writes it back, under KiCad's python. `pf_route.py` runs the negotiation in a python with scipy and shapely. `astar.c` is compiled on first use.
+
+**Freerouting stays the default.** It needs no compiler and no extra packages, and the example board and the frozen SES are built on it. On a board with room it does the job. Use this router when:
+
+- Freerouting stalls with connections open around a BGA, a CSP or a fine-pitch field.
+- The board is half routed. Copper on the board stays and only what is open gets routed, so hand-laid critical nets are safe.
+- You want the same result twice. Two runs of one board gave byte-identical route files, unless the time limit cut one short.
+
+It does not rescue a bad placement. "When the router gets stuck" applies here too, and the run stops itself when the best count has not improved for `patience` rounds.
+
+**Setup.** KiCad's python has pcbnew and numpy but not scipy or shapely, so add them to the folder `place_labels.py` already reads:
+
+```
+"C:\Program Files\KiCad\10.0\bin\python.exe" -m pip install --target <dir> scipy shapely
+set HIL_KICAD_SITE=<dir>
+```
+
+Or point `HIL_ROUTER_PYTHON` at any python that has numpy, scipy and shapely; the CadQuery venv from the setup script qualifies through `HIL_CQ_PYTHON`. A C compiler is needed once: `$CC`, clang, gcc, cc, or cl on Windows (`winget install LLVM.LLVM`, `apt install gcc`, `xcode-select --install`). The library goes to `<repo>/.tmp/astar` under a name holding a hash of the source. A compiler of the wrong bitness builds a library python can't load; the tool says so and tries the next one. Anything missing stops the run with exit 3 and the command that fixes it.
+
+**Run.**
+
+```
+"<KiCad python>" pcb/tools/route_board.py board.kicad_pcb [--config cfg.json] [--out routed.kicad_pcb] [--minutes M]
+```
+
+The input is left alone. The output is `board_routed.kicad_pcb` with its project, a `_route_report.json` and a `_drc.json`. Exit 0 means nothing is open and DRC found no error, exit 1 means the board is saved as far as it got and the report lists what is open, which nets collided and what DRC found. A job that still collides stays off the board: an open is honest, a short is not.
+
+From a board script: `Board(..., router="negotiated", router_config={...})`. The pours go on before routing in this mode, since they are how the router learns the planes. A closed route is frozen as `<board>_route.json` and replayed like the SES; `reroute` runs it again. An open route stops the run with its open nets. Nothing falls back to Freerouting.
+
+**What comes from the board.** Copper stack, outline with its cut-outs, pad shapes, holes, existing copper, each net's netclass (clearance, width, via), the board minimums (clearance, track, via, drill, annular ring, copper to edge, hole clearance, hole to hole), pours, keep-out rule areas on the board and inside footprints, drawn copper and copper text. A pair keeps the larger of its two clearances, as DRC does.
+
+**Planes.** An inner layer is a plane when its pours cover 40 % of the board and one of them is a net's first inner pour. A second inner pour of a net stays a routing layer. A net with a plane ends at vias into the plane's filled copper, not on a fragment of it: a via on an island among a chip's antipads is not on the plane. Pours on routing layers flow round whatever crosses them, and their nets route like any other. The first line of the log says what was decided. `plane_layers` and `routing_layers` overrule it.
+
+**Config.** A JSON file, `<board>.route.json` beside the board or `--config`. All of it is optional, and the header of `route_board.py` lists every key. Net patterns are exact names, with or without the leading `/`, or a full regex. A pattern that matches nothing prints a warning. The ones that matter most:
+
+| Key | What |
+|---|---|
+| `via_in_pad` | pads that may take a via, as `"U1[.].*"`. Needed under a fine BGA or CSP, or its inner balls stay open. The default is none, because via-in-pad costs money at the fab and only you can order it |
+| `width` + `widen` | route a rail thin through a ball field, then widen it wherever the copper allows. A neck stays a neck, never a violation |
+| `clearance` | more than the netclass for a rail, never less |
+| `layers`, `layer_cost` | keep a fast net on the layers beside its reference plane, by rule or by price |
+| `keepouts` | `"around": ["Y1"]` clears a box round a part for everything but its own nets, for a crystal |
+| `order`, `late_nets` | who goes first, who waits |
+
+**Limits.**
+
+- New vias are through vias. No blind, buried or micro vias. Existing ones are kept and respected.
+- No length matching, no differential pairs as pairs, no impedance. Two sides of a pair route as two nets. Check skew yourself.
+- Custom rules in a `.kicad_dru` are not read. The closing DRC does check them, so they show up as errors, not as silence.
+- Tracks run at 0 / 45 / 90 degrees on a grid, 0.05 mm by default. Rasters cost one set per width class per layer: a big board with fine rules can run out of memory, and the run refuses before it starts (`grid`, `max_ram_gb`).
+- Existing copper never moves. A half-routed board can be walled in.
+- A pour cut up by tracks can leave isolated islands, a DRC warning the pipeline's gate treats as a stop. Set the zone to remove islands, or keep tracks off that layer.
+- Planes are not protected from vias. A row of vias can slot a plane, and nothing here looks at return paths.
+
 ## 4. Determinism
 
 | What | How | Verified on the example board |
@@ -190,7 +247,7 @@ java -Djava.io.tmpdir=<out>/.router -Duser.home=<out>/.router -Xmx2g -jar freero
 | fab zip | members written with a fixed time stamp | |
 
 Commit the frozen SES together with the generator. A placement change that breaks it shows up as unconnected items in
-the final DRC; rerun with `reroute` and commit the new SES.
+the final DRC; rerun with `reroute` and commit the new SES. The negotiated router freezes `<board>_route.json` the same way.
 
 ## 5. Home-directory isolation
 
@@ -286,8 +343,6 @@ distributor returned, brand, package, stock), `fab.files` (SHA-256 per file), `f
 - **Standards checker** (`pcb/tools/standards_check.py`): implement the remaining machine rows of DESIGN_STANDARDS.md
   (PROT-01..03, RED-01, DER-01, TVS-01, EMC-02/03/04; TVS-02 is already in the pipeline's design step) over the board file and the BOM, printing rule ids; report-only first, then a CI
   gate once the boards are clean.
-- **Completion router** for what Freerouting cannot do: fine-pitch (0.4-0.5 mm) escapes where its maze search fails, with
-  clearance-exact A* and the frozen-route mechanism for the result.
 - **BGA fan-out helpers**: dog-bone and via-in-pad patterns generated from the ball map, before the router runs.
 - **Panelization** for assembly (rails, fiducials, mouse bites) as a pipeline step after the fab set.
 - **Price check**: query the fab's quote for 2 / 4 / 6 layers at the build quantity so the layer-count trade is a number.
