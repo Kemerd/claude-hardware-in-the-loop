@@ -3,6 +3,14 @@
 </p>
 
 <p align="center">
+  <a href="https://www.youtube.com/watch?v=TeIh1IkIDJI">
+    <img src="https://img.youtube.com/vi/TeIh1IkIDJI/maxresdefault.jpg" alt="Watch the video on YouTube" width="100%">
+  </a>
+  <br>
+  <sub>Click to watch on YouTube</sub>
+</p>
+
+<p align="center">
   <img src="media/out/hil.gif" alt="Hardware in the loop: agents write the code, scripts generate the hardware, gates prove it, git records it" width="100%">
 </p>
 
