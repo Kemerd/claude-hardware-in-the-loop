@@ -4,6 +4,12 @@ Newest first. Every change to `skills/hardware-in-the-loop/` that a scaffolded p
 adds a section here, written for the project owner: what gets better for them, in plain words, one bullet per item.
 `templates/tools/hil_update.py` shows these sections to the owner when upstream is ahead of their project.
 
+## 1.2.1 - 2026-11-18
+
+Claude HiL is now Nihil.sh
+- **Claude HiL is now [Nihil.sh](https://nihil.sh).** The method, the skill and the tested skeleton are unchanged; the
+  workbench around them has its own home at nihil.sh. Use invite code `HARDWAREINLOOP` for free Alpha access.
+
 ## 1.2.0 - 2026-11-05
 - **A second PCB router, for the boards Freerouting gives up on.** Dense boards around a BGA or a fine-pitch connector
   now have somewhere to go: `pcb/tools/route_board.py` reads the rules, planes and keep-outs off the board, keeps any

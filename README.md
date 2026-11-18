@@ -1,4 +1,8 @@
 <p align="center">
+  <b>Claude HiL is now <a href="https://nihil.sh">Nihil.sh</a>.</b> Use invite code <code>HARDWAREINLOOP</code> for free Alpha access.
+</p>
+
+<p align="center">
   <img src="media/out/hil.gif" alt="Hardware in the loop: agents write the code, scripts generate the hardware, gates prove it, git records it" width="100%">
 </p>
 
